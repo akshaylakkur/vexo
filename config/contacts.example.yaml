@@ -4,6 +4,8 @@
 # ever receive a message from Steady, and everything goes out as you:
 #   text messages  from your own iMessage account on this Mac (Messages must be signed in)
 #   emails         from sender.email, through your own mail account (smtp below)
+#   phone calls    after a possible fall with no answer, Steady phones contacts.caregiver,
+#                  then contacts.backup_caregiver (Twilio; TWILIO_* in .env)
 # Phone numbers in full international form: +14155550123.
 
 sender:
@@ -22,6 +24,9 @@ contacts:
     name: Priya
     phone: "+14155550123"
     email: priya@example.com
+  backup_caregiver:             # optional: phoned if the caregiver doesn't confirm after a fall
+    name: Sam
+    phone: "+14155550124"
   doctor:
     name: Dr. Patel
     email: patel@clinic.example

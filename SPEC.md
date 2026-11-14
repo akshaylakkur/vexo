@@ -443,7 +443,8 @@ example "AirPods"). If not found, it falls back to the system default and logs a
   what they say, and end when they're OK.
 - Hard rules: never diagnose; never suggest changing, adding or skipping medication ("that's
   one for your doctor"); for danger words ("I can't get up", "chest pain", "help"), tell the
-  person to call emergency services or someone nearby. Steady itself alerts nobody (see 7.5a).
+  person to call emergency services or someone nearby. After a possible fall, if Steady can
+  phone the caregiver, it says so and ends the conversation as `needs_help`, which places the call.
 - Every action outside the conversation goes through a tool. The model never writes code or
   free-form commands.
 - First conversation each day starts with: "Just so you know, I'm listening through your band
@@ -472,7 +473,7 @@ example "AirPods"). If not found, it falls back to the system default and logs a
 | THINKING | Stream the Ollama reply; the first sentence goes to TTS as soon as it's complete. |
 | Interruption | While SPEAKING, a `SpeechStarted` followed by ≥ 2 interim words: stop the player, send TTS `Clear`, cancel the LLM stream, go to LISTENING. Headphones prevent the agent hearing itself. If config falls back to speakers, interruptions are off and STT is ignored while speaking. |
 | CHECKING_SILENCE | 12 s without speech after a question: the agent asks once more, simpler ("Can you hear me? Just say yes or no."). Second silence: urgent → ESCALATING; otherwise CLOSING with outcome `no_response`. A **single band tap** counts as "yes, I'm OK" at any time. |
-| ESCALATING | **Not built.** An urgent check-in with no answer closes as `no_response` and is marked `escalated` in the database; nothing is sent. The alert path is reserved for separate work (see 7.5a). |
+| ESCALATING | An urgent check-in (a possible fall) with no answer closes as `no_response` and is marked `escalated`; one that ends `needs_help` is treated the same way. Steady then **phones the caregiver**, then the backup caregiver (`steady/call`, Twilio + Pipecat), and tells the wearer in the headphones what is happening. No text message or email is sent. |
 | CLOSING | Agent says goodbye. `configure(audio=False)`; the LED returns to screening green. Conversation row saved with outcome and summary. |
 
 **Limits:** a conversation lasts at most 10 min (it then wraps up politely). The motion stream
@@ -558,6 +559,11 @@ Each turn's timings are stored in `turns.latency_ms` and printed by `steady talk
 OpenClaw never computes symptom metrics itself. It asks Steady for them, so numbers in
 messages always match the database.
 
+**As built (caregiver phone call, merged on `main-caller`):** besides OpenClaw's messages,
+Steady itself phones the caregiver (then the backup) after a fall with no answer or "needs help",
+with Twilio + Pipecat + Deepgram + Ollama, and records a `caregiver_call` task (tier 2). See
+`docs/caregiver-call.md`.
+
 ### 7.2 Integration
 
 **Steady → OpenClaw:** OpenClaw's gateway hooks, `POST /hooks/agent` on loopback, with a
@@ -642,8 +648,9 @@ created ─▶ (tier 1) needs_confirmation ─▶ confirmed ─▶ sent (hook OK
 - **Two outgoing paths only.** (1) The wearer asks out loud for a text message or an email to
   an approved contact, and says yes once. (2) The end-of-day brief to the caregiver, at
   `brief.time`, by text, email or both. Task types: `message_contact`, `email_contact`,
-  `daily_brief`. **There is no emergency or alert path in M6**; a fall with no answer closes the
-  conversation and nothing is sent. That path is reserved for separate work.
+  `daily_brief`. **Messages have no emergency path.** After a possible fall with no answer, or
+  when the wearer says they need help, Steady phones the caregiver (see the note after 7.2 and
+  `docs/caregiver-call.md`).
 - **Allowlist.** Only the phone numbers and email addresses in `config/contacts.yaml` can
   receive anything; delivery re-checks the exact address on every send.
 - **Sent as the wearer.** Texts go through Messages on this Mac (the wearer's own iMessage

@@ -3,7 +3,7 @@
 There are exactly two ways a message leaves Steady:
   voice      the wearer asks out loud for a message or an email: needs their yes (tier 1)
   schedule   the end-of-day brief to the contact the wearer set up in config (tier 0)
-There is no emergency path here.
+Messages have no emergency path. After a possible fall, Steady phones the caregiver instead (steady/call).
 """
 from __future__ import annotations
 

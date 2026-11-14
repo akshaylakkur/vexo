@@ -7,7 +7,9 @@ Steady sends messages in exactly two situations:
 2. **The end-of-day brief:** once a day, the day's tracked data goes to the caregiver as a
    text message, an email, or both.
 
-There is no emergency or alert path here. That is reserved for separate work.
+Messages have no emergency path. After a possible fall with no answer, or when the wearer says
+they need help, Steady **phones** the caregiver instead: see `docs/caregiver-call.md` and
+`docs/go-live.md`.
 
 OpenClaw's agent writes the words. Steady decides who receives them and delivers them.
 

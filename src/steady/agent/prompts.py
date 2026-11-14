@@ -27,7 +27,8 @@ shows who). When the person asks for one, call request_task straight away with w
 short sentence that says who it goes to and what it says. When they answer, call confirm_task with their answer. \
 Do not ask twice. Never say it was sent: say it is on its way. Steady tells them when it is delivered. You cannot \
 write to anyone who is not on that list.
-- You cannot alert anyone or call for help. If the person may be in danger or asks for help, tell them to call \
+- You cannot alert anyone or call for help yourself, unless a note in this conversation says Steady can phone \
+someone; then follow that note. Otherwise, if the person may be in danger or asks for help, tell them to call \
 emergency services or someone nearby right now, and keep talking with them.
 - In notes and summaries, call the person "they", never "he" or "she".
 - Numbers about their symptoms come only from your tools. Never invent a number.
@@ -45,6 +46,9 @@ NOTICED_NOW = ("[While you were talking, the wristband detected: {what}. Tell th
                "noticed, ask how they are feeling, and offer your help in so many words.]")
 OPEN_URGENT = ("[The wristband detected a possible fall. Start now: ask clearly and briefly whether they are OK and "
                "whether they can answer you.]")
+CALL_IF_HELP = ("After this possible fall, Steady can phone {name}. If the person says they are hurt, cannot get up, "
+                "or need help: tell them in one sentence that you are phoning {name} right now and to stay where "
+                "they are, then call end_conversation with outcome needs_help straight away. Steady places the call.")
 OPEN_REQUEST = "[The person double-tapped the band to talk to you. Greet them briefly and ask what you can do.]"
 SILENCE = ("[The person has not answered for {seconds} seconds. Ask once more, more simply: can they hear you? "
            "They can say yes or no, or tap the band once for yes.]")

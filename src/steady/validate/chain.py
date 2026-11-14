@@ -7,7 +7,7 @@
    microphone) says they are OK and asks for a text to Priya, then says yes: OpenClaw must
    word it and Steady must deliver it (dry run: written to data/outbox.jsonl, never sent).
 2. A fall is played and nobody answers. The urgent check-in must open, ask twice, close as
-   no_response, and send NOTHING: there is no emergency path.
+   no_response, and send no message. (The pretend band never phones anyone either.)
 Needs the OpenClaw gateway that config/local.yaml points to.
 """
 from __future__ import annotations
@@ -138,7 +138,7 @@ async def main() -> int:
         ("fall detected", fall is not None),
         ("urgent check-in opened, asked twice, closed without an answer",
          len(convs) >= 2 and convs[1]["outcome"] == "no_response" and convs[1]["episode_id"] == (fall or {}).get("id")),
-        ("nothing was sent after the fall (no emergency path)", len(tasks) == tasks_before == 1),
+        ("no message was sent after the fall, and the pretend band phoned nobody", len(tasks) == tasks_before == 1),
         ("no samples lost", steady.ring.lost == 0),
     ]
     print("\n--- verdict ---")

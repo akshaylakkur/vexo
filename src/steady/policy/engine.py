@@ -3,7 +3,8 @@
 Listens to episode.started / updated / escalated (an episode is re-checked every window, so
 a tremor that reaches 60 s opens a check-in at that moment) and to double-taps. The rules
 decide; this opens the conversation, tells it what was held back earlier ("I also noticed"),
-and links the conversation to its episode.
+links the conversation to its episode, and phones the caregiver when a possible fall gets no
+answer or the person says they need help.
 """
 from __future__ import annotations
 
@@ -84,6 +85,9 @@ class PolicyEngine:
         if self.deferred:
             notes.append(prompts.ALSO_NOTICED.format(what="; ".join(self.deferred[-5:])))
             self.deferred.clear()
+        caller = getattr(self.steady, "caller", None)
+        if urgent and caller is not None and getattr(caller, "ready", False) and caller.who():
+            notes.append(prompts.CALL_IF_HELP.format(name=caller.who()[0]))      # "I need help" then phones them
         task = asyncio.create_task(self._converse(trigger, episode, urgent, notes), name="conversation")
         self._tasks.add(task)
         task.add_done_callback(self._tasks.discard)
@@ -96,3 +100,36 @@ class PolicyEngine:
             return
         if out is not None and out.id is not None and episode and episode.get("id") is not None:
             self.steady.writer.execute("UPDATE episodes SET conversation_id=? WHERE id=?", (out.id, episode["id"]))
+        if out is not None and urgent and (out.escalated or out.outcome == "needs_help"):
+            await self._call_caregiver(episode or {}, out)
+
+    async def _call_caregiver(self, episode: dict, out) -> None:
+        """After a possible fall: no answer, or the person needs help. Phone the caregiver."""
+        t = episode.get("started_at") or time.time()
+        at = time.strftime("%H:%M", time.localtime(t))
+        if out.escalated:
+            what = (f"At {at} the wristband detected a possible fall: a drop, a hard impact, then stillness. "
+                    "Steady asked through the headphones twice and got no answer.")
+        else:
+            what = (f"At {at} the wristband detected a possible fall. Steady spoke with them through the "
+                    f"headphones and they said they need help. {out.summary}").strip()
+        log.warning("possible fall, %s: calling the caregiver", "no answer" if out.escalated else "needs help")
+        caller = self.steady.caller
+        names = caller.who() if getattr(caller, "ready", False) and hasattr(caller, "who") else []
+        if names and out.escalated:               # when they asked for help, the agent has already said so
+            self._say(f"I'm phoning {names[0]} now. Stay where you are.")
+        try:
+            reached = await caller.alert(what, t, conversation_id=out.id, episode_id=episode.get("id"))
+        except Exception:  # noqa: BLE001
+            log.exception("caregiver call failed")
+            reached = False
+        if reached:
+            self._say("Someone is coming to check on you. Stay where you are.")
+        else:
+            self._say("I couldn't reach anyone by phone. If you can, please call for help.")
+
+    def _say(self, text: str) -> None:
+        """Tell the wearer in the headphones what is happening with the call."""
+        announcer = getattr(self.steady, "announcer", None)
+        if announcer is not None:
+            announcer.queue(text)

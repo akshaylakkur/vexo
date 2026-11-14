@@ -8,6 +8,7 @@
     python -m steady contacts            (check the allowlist, the sender, iMessage and email)
     python -m steady brief [--force]     (send today's brief now)
     python -m steady openclaw setup|gateway|status [--profile P] [--port N] [--model M]
+    python -m steady call [--to caregiver|backup_caregiver|+15551234567]
     python -m steady init-db
 """
 from __future__ import annotations
@@ -38,6 +39,9 @@ def main(argv: list[str] | None = None) -> int:
     p_doc.add_argument("--band", action="store_true", help="also connect to the band")
 
     sub.add_parser("init-db", help="create the database")
+
+    p_call = sub.add_parser("call", help="place a test call to the caregiver (Twilio + Pipecat + Deepgram)")
+    p_call.add_argument("--to", default="caregiver", help="caregiver, backup_caregiver, or a number like +15551234567")
 
     p_val = sub.add_parser("validate", help="run the labelled validation protocol and score the detectors")
     p_val.add_argument("--live", action="store_true", help="on the real band, performed by the wearer")
@@ -141,6 +145,9 @@ def main(argv: list[str] | None = None) -> int:
             over["band.transport"] = "sim"
         vcfg = config_mod.load(**{**load_args, "overrides": over})
         return asyncio.run(runner.run(vcfg, live=live, only=args.only.split(",") if args.only else None))
+    if args.cmd == "call":
+        from .call import cli as call_cli
+        return asyncio.run(call_cli.test_call(cfg, args.to))
     if args.cmd == "init-db":
         db.init(cfg.db_path)
         print(f"database ready: {cfg.db_path}")
