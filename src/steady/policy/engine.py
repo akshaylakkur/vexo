@@ -12,6 +12,7 @@ import logging
 import time
 
 from ..agent import prompts
+from ..screening.gestures import wrist_calm
 from .rules import Decision, PolicyParams, Rules
 
 log = logging.getLogger("steady.policy")
@@ -31,9 +32,28 @@ class PolicyEngine:
             topic, payload = await q.get()
             if topic == "band.event":
                 if payload.get("kind") == "double-tap" and not self.steady.voice.busy:
-                    self._open(trigger="double_tap")
+                    self.on_double_tap()
             else:
                 self.consider(payload)
+
+    def on_double_tap(self) -> str:
+        """A double-tap asks for a conversation. A shaking hand taps the band by itself, so a
+        double-tap from a shaking wrist is ignored: the tremor rules decide about that. On a
+        calm wrist, if a symptom episode is still open, the conversation is about that symptom,
+        not a general "what can I do for you"."""
+        screener = self.steady.screener
+        if not wrist_calm(screener.last):
+            log.info("double-tap ignored: the wrist is shaking")
+            return "ignored"
+        current = screener.episodes.current()
+        if current:
+            ep = current[0]
+            self.rules.mark_decided(ep, time.time())          # this is that episode's check-in
+            log.info("double-tap during episode %s (%s): opening a check-in about it", ep["id"], ep["kind"])
+            self._open(trigger="episode", episode=ep)
+            return "episode"
+        self._open(trigger="double_tap")
+        return "double_tap"
 
     def consider(self, ep: dict, now: float | None = None) -> Decision:
         voice = self.steady.voice
@@ -44,6 +64,11 @@ class PolicyEngine:
         if d.speak:
             log.info("episode %s (%s, %s): check in now (%s)", ep.get("id"), ep.get("kind"), d.severity, d.reason)
             self._open(trigger="episode", episode=ep, urgent=d.severity == "urgent")
+        elif d.defer and d.reason == "a conversation is already running" and getattr(voice, "current", None) is not None:
+            # do not wait for the next conversation: tell the person at the next pause in this one
+            log.info("episode %s (%s, %s): detected during a conversation; it will be mentioned now",
+                     ep.get("id"), ep.get("kind"), d.severity)
+            voice.current.notify(prompts.NOTICED_NOW.format(what=prompts.describe_episode(ep)), episode=ep)
         elif d.defer:
             log.info("episode %s (%s, %s): held back, %s; will mention it next time",
                      ep.get("id"), ep.get("kind"), d.severity, d.reason)

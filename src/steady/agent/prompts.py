@@ -37,8 +37,12 @@ emergency services or someone nearby right now, and keep talking with them.
 FIRST_TODAY = ("This is the first conversation today. In your first turn, also say in one short sentence that you "
                "listen through the band's microphone and that their voice is sent to Deepgram to be transcribed.")
 
-OPEN_EPISODE = ("[The wristband detected: {what}. Start the conversation: say who you are in a few words, say gently "
-                "what you noticed in plain words, and ask how they are feeling.]")
+OPEN_EPISODE = ("[The wristband detected: {what}. You are starting this conversation because of that. Begin with "
+                "what you noticed, in plain words, right after saying you are Steady. Then, in the same turn, ask how "
+                "they are feeling and offer your help in so many words, for example: is there anything I can do "
+                "to help? Do not open with a general greeting.]")
+NOTICED_NOW = ("[While you were talking, the wristband detected: {what}. Tell the person now, in plain words, what you "
+               "noticed, ask how they are feeling, and offer your help in so many words.]")
 OPEN_URGENT = ("[The wristband detected a possible fall. Start now: ask clearly and briefly whether they are OK and "
                "whether they can answer you.]")
 OPEN_REQUEST = "[The person double-tapped the band to talk to you. Greet them briefly and ask what you can do.]"
@@ -46,7 +50,6 @@ SILENCE = ("[The person has not answered for {seconds} seconds. Ask once more, m
            "They can say yes or no, or tap the band once for yes.]")
 TAP = ("[The person tapped the band once. That means: yes / I'm OK / confirm. If you asked them to confirm a task, "
        "call confirm_task with confirmed true now.]")
-TILT = "[The person tilted the band and held it. That means: no / cancel.]"
 WRAP_UP = "[This conversation has reached its time limit. Say a short, kind goodbye now and call end_conversation.]"
 PREEMPTING = ("You have just cut off another conversation for this. Begin with: Sorry, I need to check "
               "something important.")

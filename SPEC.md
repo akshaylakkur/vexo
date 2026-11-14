@@ -205,8 +205,8 @@ false alarms (brushing teeth is not a tremor).
 | Context | Rule (evaluated in this order) |
 |---|---|
 | `not_worn` | `gyro_rms < 0.5 °/s` **and** `acc_dyn_rms < 3 mg`, sustained for **10 min** (a worn wrist always moves a little). Ends at the first window above those values. |
-| `walking` | Band activity state is walk or run **and** cadence > 60 steps/min |
-| `rest` | `vol_power` below `rest_threshold` (calibrated: personal resting baseline p90 × 1.5) |
+| `walking` | Band activity state is walk or run **and** cadence > 60 steps/min **and** the movement is not carried by one fast rhythm (≥ 3.5 Hz). The band's step counter counts a shaking hand as steps. |
+| `rest` | `vol_power` below `rest_threshold` (calibrated: personal resting baseline p90 × 1.5), **or** one fast rhythm carries the movement and the slow band (0.5–3 Hz) holds under 20% of its power |
 | `active` | Everything else |
 
 ### 4.6 Detectors
@@ -221,8 +221,10 @@ A window is positive when **all five** hold (as built in M2):
    peak) and `peak_prom` ≥ **5**. `peak_conc` was added because sensor noise alone often
    scores high on `peak_prom`.
 3. **Strong enough:** `tremor_amp` ≥ **4 °/s**, or 3 × the calibrated noise floor if larger
-4. **Not a vigorous action:** `tremor_amp` ≤ **150 °/s** and `acc_dyn_rms` ≤ **0.35 g**
-   (brushing teeth is in the right frequency range but far too violent)
+4. **Not a violent action:** `tremor_amp` ≤ **300 °/s** and `acc_dyn_rms` ≤ **1.5 g**. These
+   were 150 °/s and 0.35 g until the first run on a real wrist: a hand shaken on purpose
+   reached 170 °/s and 1.2 g. The cost is that vigorous brushing of teeth is now flagged; the
+   check-in is what resolves it.
 5. **Context:** the arm is at rest (never judged while walking)
 
 Severity by `tremor_amp` (provisional; tuned on band 03): **mild** < 10 °/s, **moderate**
@@ -486,7 +488,7 @@ detected.
 | `log_entry` | `kind`: `medication` / `symptom` / `note`, `details` (object: e.g. `{name, dose, taken_at}`) | Row in `logs` |
 | `record_wellbeing` | `feeling`: `ok` / `unsure` / `not_ok`, `notes` | Updates the conversation; feeds the outcome |
 | `request_task` | `type` (§7.3), `details`, `urgency`: `normal` / `urgent` | Creates an OpenClaw task. Returns `needs_confirmation` with a prompt for tier-1 tasks (§7.4) |
-| `confirm_task` | `task_id`, `confirmed` | Confirms or cancels a pending task. A single tap = confirm, a tilt = cancel |
+| `confirm_task` | `task_id`, `confirmed` | Confirms or cancels a pending task. A single tap = confirm; "no" is said out loud |
 | `end_conversation` | `outcome`: `ok` / `follow_up` / `needs_help` / `no_response`, `summary` | Closes the conversation |
 
 **As built in M4:** `get_status`, `get_summary`, `log_entry`, `record_wellbeing` and
@@ -504,7 +506,14 @@ rule.
 |---|---|---|
 | Double-tap | Start a conversation ("Hi, what can I do for you?") | Stop the agent speaking and listen |
 | Single tap | — | "Yes / I'm OK / confirm" |
-| Tilt (held 2 s) | — | "No / cancel" |
+| Tilt | Ignored | Ignored: wearing the band produces tilts all the time |
+
+**Found on the real band:** a shaking hand makes the band report taps and double-taps by
+itself. So a tap or a double-tap only counts while the wrist is calm (`screening/gestures.py`).
+While it shakes, taps are ignored and the tremor rules decide. A double-tap on a calm wrist
+while a symptom episode is still open starts a check-in about that symptom, and a symptom
+detected during a conversation is mentioned at the next pause instead of waiting for the
+next conversation.
 
 ### 6.7 LED states
 

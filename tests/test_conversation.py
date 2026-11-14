@@ -275,3 +275,77 @@ def test_summary_tool_reads_rollups_and_episodes(tmp_path):
     assert out["minutes_monitored"] == 30.0 and out["steps"] == 340
     assert out["episodes"] == {"rest_tremor": {"count": 1, "total_seconds": 48}}
     assert "error" in bad
+
+
+# ---- gestures on a real wrist ----------------------------------------------------------------
+
+def test_wrist_calm_gate():
+    from steady.screening.gestures import wrist_calm
+    assert wrist_calm(None) and wrist_calm({"valid": 0})
+    assert wrist_calm({"valid": 1, "flags": 0, "acc_dyn_rms": 0.05, "tremor_amp": 2.0})
+    assert not wrist_calm({"valid": 1, "flags": 0, "acc_dyn_rms": 0.8, "tremor_amp": 60.0})    # shaking
+    assert not wrist_calm({"valid": 1, "flags": 1, "acc_dyn_rms": 0.05, "tremor_amp": 8.0})    # a tremor is flagged
+
+
+def test_tilts_never_cut_in_and_taps_are_ignored_while_the_wrist_shakes(tmp_path):
+    long_reply = "Hi, it's Steady. " + "I noticed your hand shaking for a while just now. " * 5 + "How are you feeling?"
+    script = [[("text", long_reply)], [("text", "Good. Goodbye."), call("end_conversation", outcome="ok", summary="tapped ok")]]
+    calm = {"now": False}
+
+    async def go():
+        ears, speaker = Ears(), FakeSpeaker(word_delay=0.005)
+        convo, llm, tools, writer = await setup(tmp_path, script, ears, speaker=speaker, gesture_ok=lambda: calm["now"])
+        task = asyncio.create_task(convo.run())
+        await speaker.speaking_now.wait()
+        for kind in ("tilt", "tap", "double-tap", "tilt", "tap"):                # the shaking hand "taps" and "tilts"
+            convo.bus.publish("band.event", {"kind": kind, "time": 0})
+        await asyncio.sleep(0.6)
+        first = list(convo.turns)
+        assert convo.phase == "listening" and convo.ignored_gestures == 3        # 2 taps + 1 double-tap; tilts never count
+        calm["now"] = True                                                       # the wrist is still: a real tap
+        convo.bus.publish("band.event", {"kind": "tilt", "time": 0})
+        convo.bus.publish("band.event", {"kind": "tap", "time": 0})
+        out = await task
+        await writer.close()
+        return first, out
+
+    first, out = run(go())
+    assert len(first) == 1 and first[0].role == "assistant" and not first[0].interrupted    # the opening was said in full
+    assert first[0].text.endswith("How are you feeling?")
+    assert [t.text for t in out.turns if t.role == "event"] == ["band tapped once (yes / I'm OK)"]
+    assert out.outcome == "ok"
+
+
+def test_a_symptom_detected_mid_conversation_is_said_at_the_next_pause(tmp_path):
+    script = [[("text", "Hello, it's Steady. " + "Let me think about that for a moment. " * 4)],
+              [("text", "I just noticed your hand shaking. How are you feeling? Can I help?")],
+              [("text", "Glad to hear it. Goodbye."), call("record_wellbeing", feeling="ok"),
+               call("end_conversation", outcome="ok", summary="shaking noticed, fine")]]
+
+    async def go():
+        ears, speaker = Ears(), FakeSpeaker(word_delay=0.005)
+        state = ConversationState(trigger="double_tap")
+        convo, llm, tools, writer = await setup(tmp_path, script, ears, state=state, speaker=speaker)
+        task = asyncio.create_task(convo.run())
+        await speaker.speaking_now.wait()
+        ep = {"id": 9, "kind": "rest_tremor", "duration_s": 30, "metrics": {"grade": "moderate", "freq_mean_hz": 4.3}}
+        convo.notify(prompts.NOTICED_NOW.format(what=prompts.describe_episode(ep)), episode=ep)   # mid-sentence
+        await asyncio.sleep(0.5)
+        ears.events.put_nowait(("final", "I'm fine, thanks."))
+        out = await task
+        await writer.close()
+        return out, llm, state
+
+    out, llm, state = run(go())
+    said = [t for t in out.turns if t.role == "assistant"]
+    assert not said[0].interrupted                                # the first reply was not cut off
+    assert said[1].text.startswith("I just noticed your hand shaking")
+    assert llm.seen[1][-1]["content"].startswith("[While you were talking, the wristband detected: a moderate shaking")
+    assert state.episode["id"] == 9 and out.outcome == "ok"
+
+
+def test_symptom_opening_says_what_happened_and_never_a_general_greeting():
+    text = prompts.OPEN_EPISODE.format(what="a moderate shaking of the hand")
+    assert "Begin with what you noticed" in text and "offer your help in so many words" in text
+    assert "Do not open with a general greeting" in text
+    assert not hasattr(prompts, "TILT")

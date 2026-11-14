@@ -141,6 +141,14 @@ class EpisodeTracker:
         self.bus.publish("episode.started", payload)
         return payload
 
+    def current(self) -> list[dict]:
+        """Episodes in progress right now, most severe first, as the bus publishes them."""
+        order = {"concern": 0, "notice": 1}
+        eps = sorted(self.open.values(), key=lambda e: order.get(e.severity, 2))
+        return [{"id": e.id, "kind": e.kind, "started_at": e.started_at, "ended_at": None,
+                 "duration_s": round(e.last_positive_end - e.started_at, 1), "severity": e.severity,
+                 "metrics": self._metrics(e)} for e in eps]
+
     def close_all(self) -> None:
         for bit in list(self.open):
             self._close(bit)

@@ -5,7 +5,7 @@
 
 The agent speaks first. A turn ends when speech-to-text reports a finished utterance.
 Talking over the agent stops it at once. A single tap on the band means "yes / I'm OK", a
-tilt means "no". After `silence_s` without an answer the agent asks once more; after a
+Tilts are ignored. After `silence_s` without an answer the agent asks once more; after a
 second silence the conversation closes as no_response (an urgent one is marked escalated).
 The band's motion stream and the detectors keep running the whole time.
 """
@@ -54,7 +54,7 @@ class Outcome:
 class Conversation:
     def __init__(self, state: ConversationState, agent: VoiceAgent, ears: Ears, speaker: Speaker,
                  writer: Writer, bus: Bus, silence_s: float = 12.0, max_s: float = 600.0,
-                 interrupt_min_words: int = 2, first_today: bool = False) -> None:
+                 interrupt_min_words: int = 2, first_today: bool = False, gesture_ok=None) -> None:
         self.state = state
         self.agent = agent
         self.ears = ears
@@ -65,6 +65,9 @@ class Conversation:
         self.max_s = max_s
         self.interrupt_min_words = interrupt_min_words
         self.first_today = first_today
+        self.gesture_ok = gesture_ok            # () -> bool: is the wrist calm enough for a tap to mean a tap?
+        self._notes: list[str] = []             # things detected meanwhile, to say at the next pause
+        self.ignored_gestures = 0
         self.turns: list[Turn] = []
         self.phase = "idle"
         self._reply: asyncio.Task | None = None
@@ -169,6 +172,11 @@ class Conversation:
                     if s.ended:
                         outcome = s.outcome or "ok"
                         break
+                    if self._notes:                              # detected meanwhile: say it now, at the pause
+                        notes, self._notes = self._notes, []
+                        self._turn("event", "symptom detected during the conversation")
+                        self._start_reply(note="\n".join(notes))
+                        continue
                     self._set("listening")
                     listening_since = time.monotonic()
                     self.ears.on_listening()
@@ -190,6 +198,11 @@ class Conversation:
                     self._turn("event", f"no answer for {self.silence_s:.0f} s: asking once more")
                     self._set("checking_silence")
                     self._start_reply(note=prompts.SILENCE.format(seconds=round(self.silence_s)))
+                    continue
+                if self._notes and self._reply is None:              # nobody is speaking: say it now
+                    notes, self._notes = self._notes, []
+                    self._turn("event", "symptom detected during the conversation")
+                    self._start_reply(note="\n".join(notes))
                     continue
                 try:
                     kind, text = await asyncio.wait_for(self.ears.events.get(), timeout=0.1)
@@ -217,11 +230,6 @@ class Conversation:
                         self._heard_at = time.perf_counter()
                         self._turn("event", "band tapped once (yes / I'm OK)")
                         self._start_reply(note=prompts.TAP)
-                    elif text == "tilt":
-                        await self._interrupt()
-                        strikes = 0
-                        self._turn("event", "band tilted (no / cancel)")
-                        self._start_reply(note=prompts.TILT)
                     elif text == "double-tap" and speaking:
                         await self._interrupt()
                         self._turn("event", "band double-tapped: agent stopped")
@@ -251,9 +259,23 @@ class Conversation:
             self._set("idle")
         return Outcome(s.id, outcome, s.summary, escalated, self.turns, time.time() - t_open)
 
+    def notify(self, note: str, episode: dict | None = None) -> None:
+        """Something was detected while this conversation is running: say it at the next pause,
+        without cutting anyone off."""
+        self._notes.append(note)
+        if episode and self.state.episode is None:
+            self.state.episode = episode
+
     async def _forward_band(self) -> None:
-        """Band gestures become conversation events."""
+        """Taps on the band become conversation events. Tilts are ignored (wearing the band
+        causes them), and so are taps while the wrist is shaking (the shaking causes them)."""
         while True:
             _, ev = await self._band_q.get()
-            if ev.get("kind") in ("tap", "double-tap", "tilt"):
-                self.ears.events.put_nowait(("band", ev["kind"]))
+            if ev.get("kind") not in ("tap", "double-tap"):
+                continue
+            if self.gesture_ok is not None and not self.gesture_ok():
+                self.ignored_gestures += 1
+                if self.ignored_gestures == 1:
+                    log.info("taps ignored while the wrist is shaking")
+                continue
+            self.ears.events.put_nowait(("band", ev["kind"]))
