@@ -34,6 +34,7 @@ class ConversationState:
     pending_task: int | None = None      # a task waiting for the person's yes
     user_turns: int = 0                  # how many times the person has spoken or tapped
     pending_since_turn: int = 0          # user_turns when the pending task was created
+    notes: list[str] = field(default_factory=list)   # extra [notes] for the opening, from the policy
 
 
 def _fn(name: str, description: str, properties: dict, required: list[str]) -> dict:

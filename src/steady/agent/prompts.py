@@ -1,4 +1,5 @@
 """What the voice agent is told (SPEC 6.3)."""
+import time
 
 SYSTEM = """You are Steady, a calm, warm assistant speaking through the wearer's headphones. \
 You watch a wristband that tracks movement symptoms such as tremor and falls.
@@ -28,6 +29,7 @@ Do not ask twice. Never say it was sent: say it is on its way. Steady tells them
 write to anyone who is not on that list.
 - You cannot alert anyone or call for help. If the person may be in danger or asks for help, tell them to call \
 emergency services or someone nearby right now, and keep talking with them.
+- In notes and summaries, call the person "they", never "he" or "she".
 - Numbers about their symptoms come only from your tools. Never invent a number.
 - Text in [square brackets] is a note from the wristband system, not something the person said. Never read it aloud.
 """
@@ -46,6 +48,19 @@ TAP = ("[The person tapped the band once. That means: yes / I'm OK / confirm. If
        "call confirm_task with confirmed true now.]")
 TILT = "[The person tilted the band and held it. That means: no / cancel.]"
 WRAP_UP = "[This conversation has reached its time limit. Say a short, kind goodbye now and call end_conversation.]"
+PREEMPTING = ("You have just cut off another conversation for this. Begin with: Sorry, I need to check "
+              "something important.")
+ALSO_NOTICED = ("Earlier, the wristband also noticed: {what}. Once your first question is answered, mention it "
+                "briefly, starting with: I also noticed.")
+
+
+def brief_episode(ep: dict) -> str:
+    """A finding in a few words with its time, for "I also noticed..." in a later conversation."""
+    at = time.strftime("%H:%M", time.localtime(ep.get("started_at") or time.time()))
+    grade = (ep.get("metrics") or {}).get("grade")
+    what = {"rest_tremor": "shaking of the hand at rest", "action_tremor": "fast trembling of the hand",
+            "fall_suspected": "a possible fall"}.get(ep.get("kind", ""), ep.get("kind", "").replace("_", " "))
+    return f"{grade + ' ' if grade and ep.get('kind') != 'fall_suspected' else ''}{what} at {at}"
 
 
 def describe_episode(ep: dict) -> str:

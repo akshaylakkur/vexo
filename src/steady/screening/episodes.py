@@ -109,6 +109,8 @@ class EpisodeTracker:
                     (ep.last_positive_end - ep.started_at, ep.severity, json.dumps(self._metrics(ep)), ep.id))
                 if escalated:
                     out.append(("escalated", self._publish("escalated", ep)))
+                else:
+                    self._publish("updated", ep)       # the policy re-checks the growing duration
             else:
                 ep.negatives += 1
                 if ep.negatives >= END_NEED:

@@ -365,6 +365,17 @@ conversation and/or an OpenClaw task.
 - **Demo mode** (`mode: demo`): cooldowns 2 min, tremor triggers voice at ≥ 20 s and any
   severity, and history is seeded.
 
+**As built in M5** (`policy/rules.py`, `policy/engine.py`): the fall and tremor rules, every
+guardrail above, and the double-tap trigger. The tracker publishes `episode.updated` every
+window, so a tremor check-in opens the moment the episode reaches 60 s. Each episode gets one
+decision once it reaches `concern`. Falls ignore cooldowns, quiet hours and the hourly limit.
+A finding held back by quiet hours, the hourly limit, a running conversation or a band out of
+reach is mentioned at the start of the next conversation ("I also noticed..."); one held back
+by its cooldown is not. Pre-emption closes the running conversation as `preempted`, and the
+urgent one opens with the apology. Rules for freezing, dyskinesia, slow periods, wearing-off
+and "tremor time > 2 × baseline" wait for their detectors (M8 calibration for the baseline);
+seeded demo history is M8.
+
 ---
 
 ## 6. The voice loop
@@ -429,9 +440,8 @@ example "AirPods"). If not found, it falls back to the system default and logs a
 - Purpose of each conversation: find out if the person is OK, help with what they need, log
   what they say, and end when they're OK.
 - Hard rules: never diagnose; never suggest changing, adding or skipping medication ("that's
-  one for your doctor"); for danger words ("I can't get up", "chest pain", "help"), call
-  `request_task(type="caregiver_alert", urgency="urgent")` and tell the person to call
-  emergency services if they can.
+  one for your doctor"); for danger words ("I can't get up", "chest pain", "help"), tell the
+  person to call emergency services or someone nearby. Steady itself alerts nobody (see 7.5a).
 - Every action outside the conversation goes through a tool. The model never writes code or
   free-form commands.
 - First conversation each day starts with: "Just so you know, I'm listening through your band
@@ -460,7 +470,7 @@ example "AirPods"). If not found, it falls back to the system default and logs a
 | THINKING | Stream the Ollama reply; the first sentence goes to TTS as soon as it's complete. |
 | Interruption | While SPEAKING, a `SpeechStarted` followed by ≥ 2 interim words: stop the player, send TTS `Clear`, cancel the LLM stream, go to LISTENING. Headphones prevent the agent hearing itself. If config falls back to speakers, interruptions are off and STT is ignored while speaking. |
 | CHECKING_SILENCE | 12 s without speech after a question: the agent asks once more, simpler ("Can you hear me? Just say yes or no."). Second silence: urgent → ESCALATING; otherwise CLOSING with outcome `no_response`. A **single band tap** counts as "yes, I'm OK" at any time. |
-| ESCALATING | Creates an urgent `caregiver_alert` task (§7) and tells the person: "I'm letting Priya know. Stay where you are." Keeps listening for 2 more minutes. |
+| ESCALATING | **Not built.** An urgent check-in with no answer closes as `no_response` and is marked `escalated` in the database; nothing is sent. The alert path is reserved for separate work (see 7.5a). |
 | CLOSING | Agent says goodbye. `configure(audio=False)`; the LED returns to screening green. Conversation row saved with outcome and summary. |
 
 **Limits:** a conversation lasts at most 10 min (it then wraps up politely). The motion stream
@@ -480,8 +490,8 @@ detected.
 | `end_conversation` | `outcome`: `ok` / `follow_up` / `needs_help` / `no_response`, `summary` | Closes the conversation |
 
 **As built in M4:** `get_status`, `get_summary`, `log_entry`, `record_wellbeing` and
-`end_conversation` exist. `request_task` and `confirm_task` arrive with OpenClaw in M6; until
-then the agent is told it cannot contact anyone. When the model speaks and only takes notes
+`end_conversation` exist. M6 added `list_contacts`, `request_task` (a text message or an email
+to an approved contact) and `confirm_task`. When the model speaks and only takes notes
 in the same turn, no second model call is made, which keeps the reply under about 0.5 s.
 
 The agent must call `end_conversation` to end. The turn manager rejects `outcome=ok` unless the

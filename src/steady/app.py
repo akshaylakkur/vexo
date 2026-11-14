@@ -20,6 +20,7 @@ from .band.ingest import RingBuffer
 from .band.manager import BandManager
 from .bus import Bus
 from .config import Config
+from .policy.engine import PolicyEngine
 from .screening.screener import Screener
 from .store.db import Writer
 from .voice.service import VoiceService
@@ -39,6 +40,7 @@ class Steady:
         self.band = BandManager(cfg, self.bus, self.writer, self.ring)
         self.screener = Screener(cfg, self.bus, self.writer, self.ring, self.band)
         self.voice = VoiceService(self)
+        self.policy = PolicyEngine(self)             # M5: which detections open a check-in
         # M6: the two outgoing paths (a spoken request, the end-of-day brief) and spoken outcomes
         self.tasks = TaskManager(cfg, self.bus, self.writer)
         self.brief = BriefScheduler(self, self.tasks)
@@ -61,7 +63,7 @@ class Steady:
             log.info("local API for steadyctl on %s:%d", host, port)
         tasks.append(asyncio.create_task(self.band.run(), name="band"))
         tasks.append(asyncio.create_task(self.screener.run(), name="screener"))
-        tasks.append(asyncio.create_task(self.voice.watch_double_tap(), name="voice"))
+        tasks.append(asyncio.create_task(self.policy.run(), name="policy"))    # detections and double-taps
         await self.tasks.start()
         for name, coro in (("tasks", self.tasks.watch()), ("brief", self.brief.run()),
                            ("announcer", self.announcer.run())):

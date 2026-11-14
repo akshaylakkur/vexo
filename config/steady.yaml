@@ -41,6 +41,14 @@ voice:
   max_minutes: 10
   interrupt_min_words: 2        # words heard over the agent before it stops talking
 
+policy:                         # what a detection does besides being logged (SPEC 5)
+  quiet_hours: ["22:00", "07:00"]   # only a possible fall speaks at night
+  cooldown_min: { default: 30, rest_tremor: 45 }
+  max_checkins_per_hour: 3
+  tremor_min_s: 60              # a tremor check-in needs this long...
+  tremor_min_severity: concern  # ...and moderate or worse (concern); mild is logged only
+  demo: { cooldown_min: { default: 2 }, tremor_min_s: 20, tremor_min_severity: notice }   # mode: demo
+
 context:
   rest_vol_rms_dps: 10.0        # gyro RMS in 0.5-3 Hz below this = arm at rest (calibration overrides)
   walking_min_cadence: 60

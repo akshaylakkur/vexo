@@ -71,6 +71,11 @@ class Conversation:
         self._reply_started = 0.0
         self._heard_at: float | None = None      # when the utterance being answered was finished
         self._band_q: asyncio.Queue | None = None
+        self._preempted = False
+
+    def preempt(self) -> None:
+        """Something urgent needs the headphones: stop at once, outcome "preempted"."""
+        self._preempted = True
 
     # ---- small helpers -----------------------------------------------------------------
     def _set(self, phase: str) -> None:
@@ -148,12 +153,17 @@ class Conversation:
                 opening = prompts.OPEN_REQUEST
             if self.first_today:
                 opening += "\n[" + prompts.FIRST_TODAY + "]"
+            opening += "".join("\n[" + note + "]" for note in s.notes)
             self._start_reply(note=opening)
 
             strikes = 0
             listening_since = time.monotonic()
             wrapping_up = False
             while True:
+                if self._preempted:
+                    self._turn("event", "stopped: something urgent needs checking")
+                    outcome = "preempted"
+                    break
                 if self._reply is not None and self._reply.done():
                     await self._finish_reply()
                     if s.ended:
