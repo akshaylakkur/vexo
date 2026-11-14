@@ -69,8 +69,22 @@ class Config:
         return p if p.is_absolute() else ROOT / p
 
 
+LOCAL_PATH = ROOT / "config" / "local.yaml"      # machine-specific, not committed (written by setup commands)
+
+
+def _merge(base: dict, extra: dict) -> dict:
+    for k, v in extra.items():
+        if isinstance(v, dict) and isinstance(base.get(k), dict):
+            _merge(base[k], v)
+        else:
+            base[k] = v
+    return base
+
+
 def load(path: Path = CONFIG_PATH, overrides: dict[str, Any] | None = None) -> Config:
     raw = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+    if path == CONFIG_PATH and LOCAL_PATH.exists():
+        _merge(raw, yaml.safe_load(LOCAL_PATH.read_text(encoding="utf-8")) or {})
     for dotted, value in (overrides or {}).items():
         node = raw
         *parents, leaf = dotted.split(".")

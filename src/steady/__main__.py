@@ -4,7 +4,10 @@
     python -m steady doctor [--band]
     python -m steady say "text" [--stream] [--interrupt-after 1.5]
     python -m steady talk [--sim] [--say "..."]... [--episode rest_tremor] [--silence 6]
-    python -m steady validate [--live] [--only keys] [--dashboard]
+    python -m steady validate [--live] [--only keys]
+    python -m steady contacts            (check the allowlist, the sender, iMessage and email)
+    python -m steady brief [--force]     (send today's brief now)
+    python -m steady openclaw setup|gateway|status [--profile P] [--port N] [--model M]
     python -m steady call [--to caregiver|backup_caregiver|+15551234567]
     python -m steady init-db
 """
@@ -43,7 +46,6 @@ def main(argv: list[str] | None = None) -> int:
     p_val = sub.add_parser("validate", help="run the labelled validation protocol and score the detectors")
     p_val.add_argument("--live", action="store_true", help="on the real band, performed by the wearer")
     p_val.add_argument("--only", help="comma-separated phase keys")
-    p_val.add_argument("--dashboard", action="store_true", help="also serve the live dashboard")
 
     p_say = sub.add_parser("say", help="speak text in the headphones (Deepgram text-to-speech)")
     p_say.add_argument("text", nargs="+")
@@ -59,6 +61,18 @@ def main(argv: list[str] | None = None) -> int:
     p_talk.add_argument("--sample-speech", action="store_true", help="pretend band plays the kit's recorded voice")
     p_talk.add_argument("--silence", type=float, help="seconds of silence before asking again")
     p_talk.add_argument("--max-seconds", type=float, help="wrap up after this long")
+
+    p_oc = sub.add_parser("openclaw", help="connect Steady and OpenClaw (setup, test gateway, status)")
+    p_oc.add_argument("action", choices=["setup", "gateway", "status"])
+    p_oc.add_argument("--profile", default="", help="OpenClaw profile; empty = your main OpenClaw")
+    p_oc.add_argument("--port", type=int)
+    p_oc.add_argument("--model", help="e.g. ollama/glm-5.3")
+    p_oc.add_argument("--lockdown", choices=["on", "off"], help="limit the OpenClaw agent to steadyctl only "
+                      "(default: on for a dedicated --profile, off for your main OpenClaw)")
+
+    p_brief = sub.add_parser("brief", help="send today's brief now (steadyd must be running)")
+    p_brief.add_argument("--force", action="store_true", help="even if nothing was tracked today")
+    sub.add_parser("contacts", help="check config/contacts.yaml: who may receive, who you send as, iMessage, email")
 
     args = ap.parse_args(argv)
     logging.basicConfig(level=logging.DEBUG if args.verbose else logging.INFO,
@@ -99,6 +113,29 @@ def main(argv: list[str] | None = None) -> int:
         return asyncio.run(voice_cli.talk(cfg, says=args.say, trigger="episode" if args.episode else "double_tap",
                                           kind=args.episode or "rest_tremor", sample_speech=args.sample_speech,
                                           silence_s=args.silence, max_s=args.max_seconds))
+    if args.cmd == "brief":
+        import httpx
+        from .config import secret
+        url = f"http://127.0.0.1:{cfg.get('api.port', 8765)}/api/brief"
+        try:
+            r = httpx.post(url, params={"force": str(args.force).lower()}, timeout=60,
+                           headers={"Authorization": "Bearer " + (secret("STEADY_API_TOKEN", required=False) or "")})
+        except httpx.HTTPError:
+            print("Steady is not running. Start it with: python -m steady run")
+            return 1
+        print(r.json())
+        return 0 if r.status_code == 200 else 1
+    if args.cmd == "contacts":
+        from .actions import check
+        return asyncio.run(check.run(cfg))
+    if args.cmd == "openclaw":
+        from . import openclaw_setup as ocs
+        if args.action == "setup":
+            return ocs.setup(args.profile, args.port, args.model,
+                             strict=None if args.lockdown is None else args.lockdown == "on")
+        if args.action == "gateway":
+            return ocs.gateway(args.profile, args.port)
+        return ocs.status(args.profile)
     if args.cmd == "validate":
         from .validate import runner
         live = args.live
@@ -107,8 +144,7 @@ def main(argv: list[str] | None = None) -> int:
         if not live:
             over["band.transport"] = "sim"
         vcfg = config_mod.load(**{**load_args, "overrides": over})
-        return asyncio.run(runner.run(vcfg, live=live, only=args.only.split(",") if args.only else None,
-                                      dashboard=args.dashboard))
+        return asyncio.run(runner.run(vcfg, live=live, only=args.only.split(",") if args.only else None))
     if args.cmd == "call":
         from .call import cli as call_cli
         return asyncio.run(call_cli.test_call(cfg, args.to))

@@ -51,7 +51,7 @@ class TremorDetector:
         self.p = params or TremorParams()
 
     def reasons(self, f: Features, ctx: str) -> dict[str, bool]:
-        """Each criterion on its own, for the dashboard and for tuning."""
+        """Each criterion on its own, for tuning and the validation report."""
         p = self.p
         return {
             "context": ctx in ("rest", "active"),

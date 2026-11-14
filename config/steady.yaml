@@ -86,3 +86,28 @@ storage:
 api:
   host: 127.0.0.1
   port: 8765
+
+# ---- M6: outgoing messages (through OpenClaw) --------------------------------------------
+# Two paths only: the wearer asks out loud for a text or an email, and the end-of-day brief.
+# Who may receive anything, and who Steady writes as, is in config/contacts.yaml.
+
+openclaw:
+  hooks_url: http://127.0.0.1:18789/hooks/agent
+  model: ""                     # empty = OpenClaw's default model
+  steadyctl: ""                 # set by `python -m steady openclaw setup`
+  agent_timeout_s: 300
+  confirm_expiry_s: 600         # a request nobody said yes to expires after this long
+  task_timeout_s: 600
+
+brief:
+  enabled: true
+  time: "20:00"                 # once a day, local time; sent later the same day if Steady was not running
+  to: caregiver                 # a role or name from config/contacts.yaml
+  via: [imessage]               # imessage, email, or both
+  skip_if_no_data: true         # nothing tracked today: no brief
+  fallback_s: 120               # OpenClaw has not written it by then: Steady sends the plain numbers
+
+delivery:
+  mode: live                    # live | dry_run (dry_run writes data/outbox.jsonl and sends nothing)
+  max_per_hour: 20
+  timeout_s: 45

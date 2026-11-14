@@ -1,7 +1,7 @@
 """`python -m steady doctor`: check everything Steady depends on, without printing secrets.
 
-Checks: config, database, keys (status codes only), Ollama models, headphones, dashboard
-build, and optionally the band itself (--band; only when steadyd is not running).
+Checks: config, database, keys (status codes only), Ollama models, headphones, and
+optionally the band itself (--band; only when steadyd is not running).
 """
 from __future__ import annotations
 
@@ -62,10 +62,6 @@ def run(cfg: Config, check_band: bool = False) -> int:
         results.append(_line("headphones", bool(match), match or f"none matching {want!r} in {outs}"))
     except Exception as e:  # noqa: BLE001
         results.append(_line("headphones", False, repr(e)))
-
-    from .api.server import dashboard_built
-    results.append(_line("dashboard build", dashboard_built() or None,
-                         "web/dist/main.js" if dashboard_built() else "not built (cd web && npm run build)"))
 
     results.extend(_caregiver_calls(cfg))
 

@@ -244,6 +244,10 @@ class Conversation:
             self.writer.execute(
                 "UPDATE conversations SET ended_at=?, outcome=?, summary=?, escalated=? WHERE id=?",
                 (time.time(), outcome, s.summary, int(escalated), s.id))
+            last_words = next((t.text for t in reversed(self.turns) if t.role == "user"), None)
+            self.bus.publish("conversation.ended", {      # for whoever wants to act on how it ended
+                "id": s.id, "outcome": outcome, "escalated": escalated, "summary": s.summary,
+                "trigger": s.trigger, "episode": s.episode, "started_at": t_open, "last_user_words": last_words})
             self._set("idle")
         return Outcome(s.id, outcome, s.summary, escalated, self.turns, time.time() - t_open)
 

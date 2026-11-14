@@ -1,6 +1,6 @@
 """steadyd: wires the band, screening loop, database and local API into one asyncio process.
 
-Startup order: database writer -> API -> band supervisor -> screener.
+Startup order: database writer -> local API -> band supervisor -> screener.
 Shutdown (Ctrl+C): screener -> rollup flush -> band disconnect -> database flush -> API.
 """
 from __future__ import annotations
@@ -15,7 +15,7 @@ import sys
 
 import uvicorn
 
-from .api.server import create_app, dashboard_built
+from .api.server import create_app
 from .band.ingest import RingBuffer
 from .band.manager import BandManager
 from .bus import Bus
@@ -25,6 +25,9 @@ from .policy.engine import PolicyEngine
 from .screening.screener import Screener
 from .store.db import Writer
 from .voice.service import VoiceService
+from .actions.brief import BriefScheduler
+from .actions.tasks import TaskManager
+from .voice.announce import Announcer
 
 log = logging.getLogger("steady")
 
@@ -38,8 +41,12 @@ class Steady:
         self.band = BandManager(cfg, self.bus, self.writer, self.ring)
         self.screener = Screener(cfg, self.bus, self.writer, self.ring, self.band)
         self.voice = VoiceService(self)
-        self.policy = PolicyEngine(self)
-        self.caller = CaregiverCaller(self)
+        self.policy = PolicyEngine(self)             # M5: which detections open a check-in
+        # M6: the two outgoing paths (a spoken request, the end-of-day brief) and spoken outcomes
+        self.tasks = TaskManager(cfg, self.bus, self.writer)
+        self.brief = BriefScheduler(self, self.tasks)
+        self.announcer = Announcer(self)
+        self.caller = CaregiverCaller(self)          # phones the caregiver after an unanswered fall
 
     async def run(self, with_api: bool = True) -> None:
         await self.writer.start()
@@ -47,8 +54,6 @@ class Steady:
         server = None
         caffeinate = self._keep_awake()
         if with_api:
-            if not dashboard_built():
-                log.warning("dashboard not built: run `cd web && npm run build` (API still works)")
             host, port = self.cfg.get("api.host", "127.0.0.1"), int(self.cfg.get("api.port", 8765))
             if host not in ("127.0.0.1", "localhost", "::1"):
                 raise SystemExit("api.host must be a loopback address")
@@ -57,10 +62,14 @@ class Steady:
                                                    timeout_graceful_shutdown=2))
             server.install_signal_handlers = lambda: None  # we handle Ctrl+C ourselves
             tasks.append(asyncio.create_task(server.serve(), name="api"))
-            log.info("dashboard: http://%s:%d/", host, port)
+            log.info("local API for steadyctl on %s:%d", host, port)
         tasks.append(asyncio.create_task(self.band.run(), name="band"))
         tasks.append(asyncio.create_task(self.screener.run(), name="screener"))
-        tasks.append(asyncio.create_task(self.policy.run(), name="policy"))
+        tasks.append(asyncio.create_task(self.policy.run(), name="policy"))    # detections and double-taps
+        await self.tasks.start()
+        for name, coro in (("tasks", self.tasks.watch()), ("brief", self.brief.run()),
+                           ("announcer", self.announcer.run())):
+            tasks.append(asyncio.create_task(coro, name=name))
         tasks.append(asyncio.create_task(self.caller.start(), name="caller"))   # call server + tunnel; never raises
 
         stop = asyncio.Event()
@@ -84,9 +93,8 @@ class Steady:
         await self.band.stop()                     # lets the supervisor disconnect cleanly
         with contextlib.suppress(asyncio.TimeoutError, asyncio.CancelledError, Exception):
             await asyncio.wait_for(asyncio.shield(band_task), timeout=5)
-        self.bus.publish("shutdown", None)             # live WebSockets close themselves
         if server:
-            server.should_exit = True                  # closes WebSockets and returns by itself
+            server.should_exit = True
             api_task = next(t for t in tasks if t.get_name() == "api")
             with contextlib.suppress(asyncio.TimeoutError, asyncio.CancelledError, Exception):
                 await asyncio.wait_for(asyncio.shield(api_task), timeout=5)

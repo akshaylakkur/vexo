@@ -1,31 +1,25 @@
 """Phones the caregiver after a fall the wearer did not answer (SPEC 6.4 ESCALATING, 7.3).
 
-Calls `caregiver`, then `backup_caregiver` if the first one doesn't confirm (no answer, busy,
-voicemail, or "I can't"), from config/contacts.yaml. Each alert is one row in `tasks`
-(type caregiver_call, tier 2: placed without asking, because the wearer may be unable to
-answer) that ends `done` (someone confirmed they will check) or `failed`. Phone numbers stay in
-contacts.yaml and are never logged; the log names people by name.
+Calls `contacts.caregiver`, then `contacts.backup_caregiver` if the first one doesn't confirm
+(no answer, busy, voicemail, or "I can't"), from config/contacts.yaml, the same allowlist the
+M6 messages use. Each alert is one row in `tasks` (type caregiver_call, tier 2: placed without
+asking, because the wearer may be unable to answer) that ends `done` (someone confirmed they
+will check) or `failed`. Phone numbers stay in contacts.yaml and are never logged.
 """
 from __future__ import annotations
 
 import asyncio
 import json
 import logging
-import re
 import shutil
 import time
-from dataclasses import dataclass
-
-import yaml
-
+from ..actions.contacts import CONTACTS_PATH, PHONE, Contact, Contacts
 from ..config import secret
-from ..kitpath import ROOT
 from .server import CallServer, CallSession
 from .twilio import TwilioClient, TwilioCreds, TwilioError
 
 log = logging.getLogger("steady.call")
-CONTACTS = ROOT / "config" / "contacts.yaml"
-PHONE = re.compile(r"^\+[1-9]\d{6,14}$")
+CONTACTS = CONTACTS_PATH
 CALL_ORDER = ("caregiver", "backup_caregiver")
 WRIST = {"rest": "the arm is still", "active": "the arm is moving", "walking": "walking",
          "not_worn": "the band seems to be off the wrist", "unknown": "no clear reading"}
@@ -49,27 +43,12 @@ TEST_WHAT = ("Nothing has happened. This is a test call, to check that Steady ca
              "start that it is only a test.")
 
 
-@dataclass(frozen=True)
-class Contact:
-    role: str
-    name: str
-    phone: str
-
-
 def load_contacts(path=None) -> tuple[str, list[Contact]]:
-    """The wearer's name and the people to call, in order. Bad or missing numbers are skipped."""
-    path = path or CONTACTS
-    raw = (yaml.safe_load(path.read_text(encoding="utf-8")) or {}) if path.exists() else {}
-    wearer = str((raw.get("wearer") or {}).get("name") or "the wearer")
-    people = []
-    for role in CALL_ORDER:
-        entry = raw.get(role) or {}
-        phone = re.sub(r"[\s()-]", "", str(entry.get("phone") or ""))
-        if PHONE.match(phone):
-            people.append(Contact(role, str(entry.get("name") or role.replace("_", " ")), phone))
-        elif phone:
-            log.warning("contacts: %s's phone is not in international form (+15551234567); skipped", role)
-    return wearer, people
+    """The wearer's name (`sender` in contacts.yaml) and the people to call, in order, from the same
+    allowlist the messages use. Contacts without a usable phone number are skipped."""
+    book = Contacts.load(path or CONTACTS)
+    by_role = {c.role: c for c in book.items}
+    return book.sender.name or "the wearer", [by_role[r] for r in CALL_ORDER if r in by_role and by_role[r].phone]
 
 
 async def _first(*events: asyncio.Event, timeout: float) -> bool:
@@ -140,7 +119,7 @@ class CaregiverCaller:
         """Call until someone confirms they will check on the wearer. True if someone did."""
         wearer, people = load_contacts()
         if only:
-            people = ([Contact("test", "the person answering", only)] if PHONE.match(only)
+            people = ([Contact("test", "the person answering", phone=only)] if PHONE.match(only)
                       else [p for p in people if p.role == only])
         now = time.time()
         task_id = await self.steady.writer.insert_returning_id("tasks", {

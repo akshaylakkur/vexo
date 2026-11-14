@@ -176,8 +176,8 @@ class FakeTwilio:
 def run_alert(tmp_path, monkeypatch, outcomes, contacts=True, ready=True):
     path = tmp_path / "contacts.yaml"
     if contacts:
-        path.write_text('wearer: {name: Margaret}\ncaregiver: {name: Priya, phone: "+1 555 222 3333"}\n'
-                        'backup_caregiver: {name: Sam, phone: "+15554445555"}\ndoctor: {name: Dr P}\n')
+        path.write_text('sender: {name: Margaret}\ncontacts:\n  caregiver: {name: Priya, phone: "+1 555 222 3333"}\n'
+                        '  backup_caregiver: {name: Sam, phone: "+15554445555"}\n  doctor: {name: Dr P, email: p@x.example}\n')
     monkeypatch.setattr(caller_mod, "CONTACTS", path)
 
     async def go():

@@ -22,6 +22,8 @@ class VoiceAgent:
 
     async def respond(self, user_text: str | None = None, note: str | None = None) -> AsyncIterator[str]:
         """Add what the person said (and/or a [system note]) and stream the reply."""
+        if user_text or (note and note.startswith("[The person tapped")):
+            self.tools.state.user_turns += 1          # the person spoke or tapped
         parts = [p for p in (note, user_text) if p]
         if parts:
             self.messages.append({"role": "user", "content": "\n".join(parts)})
