@@ -1,0 +1,73 @@
+# Steady configuration. No secrets here: keys live in .env (never committed).
+
+band:
+  number: 3                     # Vexo-HACK-03. The only place the band number is written.
+  transport: serial             # serial (USB cable) | ble (Bluetooth) | sim (pretend band)
+  reconnect_seconds: 120
+
+mode: normal                    # normal | demo
+
+sampling:
+  mode: full                    # full: 208 Hz both sensors | eco: 100 Hz
+  accel_range_g: 8
+  gyro_range_dps: 1000
+  window_s: 4.0                 # analysis window
+  hop_s: 2.0                    # a full assessment every 2 s
+  pad_s: 2.0                    # extra history before the window, for filter settling
+
+led:
+  screening_colour: "#00ff40"
+  uncalibrated_colour: "#ffa000"
+  brightness: 0.08
+  period_ms: 4000
+
+audio:
+  output_device: "Beats"        # matched by substring against output device names
+  fallback_to_speakers_for_urgent: true
+
+models:
+  voice_model: deepseek-v4.1-flash      # measured 2026-11-14: ~300 ms first token, correct tool calls
+  voice_model_fallback: glm-5.3-flash
+  openclaw_model: glm-5.3
+
+deepgram:
+  stt_model: nova-3
+  tts_voice: aura-2-thalia-en
+  endpointing_ms: 300
+  utterance_end_ms: 1000
+
+voice:
+  silence_s: 12                 # no answer for this long: ask once more, then close
+  max_minutes: 10
+  interrupt_min_words: 2        # words heard over the agent before it stops talking
+
+context:
+  rest_vol_rms_dps: 10.0        # gyro RMS in 0.5-3 Hz below this = arm at rest (calibration overrides)
+  walking_min_cadence: 60
+  not_worn_gyro_rms_dps: 0.5
+  not_worn_acc_dyn_rms_g: 0.003
+  not_worn_after_s: 600
+  activity_max_age_s: 3.0
+
+thresholds:                     # starting values; calibration (M8) replaces noise_floor_dps
+  tremor:
+    min_amp_dps: 4.0            # weakest rhythm that counts, deg/s RMS in 3.5-12 Hz
+    max_amp_dps: 150.0          # stronger than this is a deliberate action, not a tremor
+    max_acc_dyn_g: 0.35
+    min_ratio: 0.5
+    min_conc: 0.4
+    min_prom: 5.0
+  fall:
+    freefall_g: 0.35
+    impact_g: 3.0
+    still_dyn_g: 0.08
+    orientation_deg: 45.0
+
+storage:
+  db_path: data/steady.db
+  keep_last_assessments: 2000   # every assessment is saved; older ones are deleted, except positive ones
+  prune_every_ticks: 30         # delete old non-positive assessments once a minute
+
+api:
+  host: 127.0.0.1
+  port: 8765

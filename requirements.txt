@@ -1,0 +1,13 @@
+pyserial
+bleak
+av
+sounddevice
+numpy
+scipy
+httpx
+websockets
+fastapi
+uvicorn[standard]
+pyyaml
+certifi
+pytest

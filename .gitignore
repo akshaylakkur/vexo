@@ -1,0 +1,12 @@
+.env
+.venv/
+vexo-open-kit/
+data/
+config/contacts.yaml
+__pycache__/
+*.pyc
+.pytest_cache/
+web/node_modules/
+web/dist/
+.forklane/
+.DS_Store

@@ -1,0 +1,53 @@
+:root {
+  --bg: #0d1117; --panel: #161b22; --line: #30363d; --text: #e6edf3; --muted: #8b949e;
+  --accent: #3fb950; --warn: #d29922; --bad: #f85149; --blue: #58a6ff; --violet: #bc8cff;
+  color-scheme: dark;
+}
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--bg); color: var(--text); font: 14px/1.4 -apple-system, BlinkMacSystemFont, "Inter", sans-serif; }
+header { display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 12px;
+  padding: 14px 20px; border-bottom: 1px solid var(--line); position: sticky; top: 0; background: var(--bg); z-index: 1; }
+.brand { font-size: 18px; font-weight: 600; display: flex; align-items: center; gap: 8px; }
+.brand small { color: var(--muted); font-weight: 400; font-size: 13px; }
+.dot { width: 10px; height: 10px; border-radius: 50%; background: var(--bad); display: inline-block; }
+.dot.on { background: var(--accent); box-shadow: 0 0 8px var(--accent); }
+.pills { display: flex; gap: 6px; flex-wrap: wrap; }
+.pill { border: 1px solid var(--line); border-radius: 999px; padding: 3px 10px; color: var(--muted); font-size: 12px; }
+.pill b { color: var(--text); font-weight: 600; }
+.pill.bad b { color: var(--bad); } .pill.warn b { color: var(--warn); }
+main { padding: 16px 20px; display: grid; gap: 16px; max-width: 1200px; margin: 0 auto; }
+.cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 12px; }
+.card, .panel { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 14px 16px; min-width: 0; }
+.card label { color: var(--muted); font-size: 12px; text-transform: uppercase; letter-spacing: .04em; }
+.card .big { font-size: 28px; font-weight: 650; margin: 4px 0; font-variant-numeric: tabular-nums; }
+.card small, h2 small { color: var(--muted); font-weight: 400; }
+h2 { font-size: 14px; margin: 0 0 10px; font-weight: 600; }
+canvas { width: 100%; display: block; }
+.legend { display: flex; gap: 16px; color: var(--muted); font-size: 12px; margin-top: 6px; flex-wrap: wrap; }
+.legend i { display: inline-block; width: 10px; height: 3px; margin-right: 6px; vertical-align: middle; }
+.split { display: grid; grid-template-columns: 1fr 2fr; gap: 16px; }
+@media (max-width: 800px) { .split { grid-template-columns: 1fr; } }
+.events { list-style: none; margin: 0; padding: 0; max-height: 220px; overflow: auto; }
+.events li { padding: 4px 0; border-bottom: 1px solid var(--line); color: var(--muted); }
+.events li b { color: var(--text); }
+table { width: 100%; border-collapse: collapse; font-variant-numeric: tabular-nums; font-size: 12px; }
+th, td { text-align: left; padding: 4px 6px; border-bottom: 1px solid var(--line); }
+th { color: var(--muted); font-weight: 500; }
+.ctx-rest { color: var(--blue); } .ctx-active { color: var(--accent); } .ctx-walking { color: var(--violet); }
+.ctx-not_worn, .ctx-unknown { color: var(--muted); }
+.detect { display: flex; align-items: center; gap: 14px; flex-wrap: wrap; }
+.badge { padding: 6px 14px; border-radius: 999px; font-weight: 650; background: rgba(63,185,80,.15); color: var(--accent); }
+.badge.pos { background: rgba(248,81,73,.18); color: var(--bad); }
+.checks { display: flex; gap: 6px; flex-wrap: wrap; }
+.check { font-size: 12px; padding: 2px 8px; border-radius: 6px; border: 1px solid var(--line); color: var(--muted); }
+.check.ok { color: var(--accent); border-color: rgba(63,185,80,.4); }
+.sev-urgent, .sev-concern { color: var(--bad); font-weight: 600; } .sev-notice { color: var(--warn); }
+tr.pos td { background: rgba(248,81,73,.08); }
+.transcript { max-height: 220px; overflow: auto; display: grid; gap: 6px; }
+.line { padding: 6px 10px; border-radius: 8px; max-width: 85%; }
+.line.assistant { background: rgba(88,166,255,.12); justify-self: start; }
+.line.user { background: rgba(63,185,80,.12); justify-self: end; }
+.line.event { color: var(--muted); font-size: 12px; justify-self: center; }
+.line.interim { opacity: .55; font-style: italic; }
+.line small { color: var(--muted); margin-left: 8px; }
+.foot { color: var(--muted); text-align: center; font-size: 12px; padding-bottom: 20px; }
