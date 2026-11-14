@@ -64,6 +64,15 @@ async def talk(cfg: Config, says: list[str] | None = None, trigger: str = "doubl
             steady.band.sim_options["audio_packets"] = audio.ogg_packets(KIT / "dashboard" / "speech" / "sample-speech.opus")
     await steady.writer.start()
     tasks = [asyncio.create_task(steady.band.run()), asyncio.create_task(steady.screener.run())]
+    # M6: OpenClaw needs steadyd's API to fetch and deliver tasks this conversation creates
+    import uvicorn
+
+    from ..api.server import create_app
+    server = uvicorn.Server(uvicorn.Config(create_app(steady), host="127.0.0.1", port=int(cfg.get("api.port", 8765)),
+                                           log_level="warning", lifespan="off", timeout_graceful_shutdown=2))
+    server.install_signal_handlers = lambda: None
+    await steady.tasks.start()
+    extra = [asyncio.create_task(c) for c in (server.serve(), steady.tasks.watch(), steady.announcer.run())]
     out = None
     try:
         for _ in range(150):
@@ -79,7 +88,19 @@ async def talk(cfg: Config, says: list[str] | None = None, trigger: str = "doubl
                        "metrics": {"grade": "moderate", "freq_mean_hz": 4.8, "amp_peak_dps": 18}}
         out = await steady.voice.converse(trigger=trigger, episode=episode, urgent=kind == "fall_suspected" and trigger == "episode",
                                           ears=ScriptEars(says) if says else None, silence_s=silence_s, max_s=max_s)
+        for _ in range(240):                                  # let tasks from this conversation finish
+            await asyncio.sleep(0.5)
+            open_tasks = [t for t in steady.tasks.tasks.values()
+                          if t.status not in ("done", "failed", "cancelled", "expired", "needs_confirmation")]
+            if not open_tasks and steady.announcer._q.empty():
+                break
+        await asyncio.sleep(4.0)                              # ... and the spoken outcome
     finally:
+        server.should_exit = True
+        for t in extra[1:]:
+            t.cancel()
+        with contextlib.suppress(Exception):
+            await asyncio.wait_for(extra[0], 5)
         tasks[1].cancel()
         steady.screener.close()
         await steady.band.stop()
@@ -97,6 +118,10 @@ async def talk(cfg: Config, says: list[str] | None = None, trigger: str = "doubl
         extra += "   [interrupted]" if t.interrupted else ""
         print(f"{t.role:>9}: {t.text}{extra}")
     lat = out.latencies
+    for t in steady.tasks.tasks.values():
+        print(f"     task {t.id}: {t.type} to {t.recipient.name} -> {t.status} ({t.note})")
+        for d in t.deliveries:
+            print(f"            delivered by {d['by']} via {d['channel']}: {d['text']}")
     print(f"\noutcome: {out.outcome}{' (escalated)' if out.escalated else ''} | summary: {out.summary or '-'} | "
           f"{out.seconds:.0f} s | reply latency: " +
           (f"median {sorted(lat)[len(lat) // 2]:.0f} ms, worst {max(lat):.0f} ms over {len(lat)} replies" if lat else "-"))

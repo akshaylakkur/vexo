@@ -82,14 +82,14 @@ Steady is three loops that run at different speeds and share one database and on
 | ③ Action | Seconds to hours | Messaging, email, briefings, reports, reminders | OpenClaw hooks + `steady` skill + `steadyctl` CLI |
 
 **One process owns the band.** The band accepts one Bluetooth connection at a time, so
-`steadyd` holds it, and everything else (the dashboard, OpenClaw) goes through `steadyd`'s
+`steadyd` holds it, and everything else (OpenClaw) goes through `steadyd`'s
 local API. Nothing else connects to the band.
 
 ### 2.1 Processes
 
 | Process | Started by | Listens on |
 |---|---|---|
-| `steadyd` (`python -m steady run`) | User / launch script | `127.0.0.1:8765` (local API + dashboard) |
+| `steadyd` (`python -m steady run`) | User / launch script | `127.0.0.1:8765` (local API for `steadyctl`) |
 | OpenClaw gateway | `openclaw gateway` | Loopback only; hooks enabled with a dedicated token |
 | `caffeinate -i -w <steadyd pid>` | `steadyd` on startup | Keeps the Mac from idle-sleeping while Steady runs (lid must stay open) |
 
@@ -106,7 +106,7 @@ local API. Nothing else connects to the band.
 | Gestures | `configure(events=True)` (all 7 gestures, default tap threshold 800 mg) | Free-fall feeds the fall detector. Taps and double-taps are the wearer's buttons (§6.6). |
 | Steps | `configure(activity=1)` | Walking state, cadence and steps, every second. |
 | Battery | `configure(battery=60)` | One reading a minute. |
-| Signal | `configure(link=5)` | Signal strength every 5 s. Shows range problems on the dashboard. |
+| Signal | `configure(link=5)` | Signal strength every 5 s, logged with each assessment. |
 | Clock | Set by the library on connect | Every event has real time. |
 | Mic | **Off** in screening; `configure(audio=True)` only during a conversation | Privacy. The LED stays usable. |
 | LED | Screening: green "breathe", 4 s period, brightness 0.08 | Tells the wearer Steady is watching, using little power. See §6.7 for all LED states. |
@@ -134,7 +134,7 @@ If a `stream-dropped` notice arrives during a conversation, motion falls back to
 - The library retries for 2 minutes after a dropped link. After it gives up, `steadyd`'s
   **supervisor** keeps calling `Band.connect` with backoff (5 s, 10 s, 20 s, then every 30 s),
   forever. The wearer has to double-tap to make the band findable again, so a LED/voice cue
-  isn't possible; the dashboard shows "Band out of range — double-tap the band".
+  isn't possible; the terminal log says "Double-tap the band".
 - Every disconnected stretch is written to `connectivity_gaps` (start, end, reason).
 - The band number **3** lives in one place (`config/steady.yaml: band.number`). The library
   checks it on connect (`wrong-band` closes the link).
@@ -318,7 +318,7 @@ A guided, spoken calibration (~8 minutes, through the headphones), saved in `bas
 | Normal walk | 2 min | **Arm swing**, cadence, `step_reg`, freeze-index baseline |
 
 Without calibration, the conservative defaults in `config/steady.yaml` apply and the
-dashboard shows "uncalibrated".
+band breathes amber instead of green ("uncalibrated").
 
 ---
 
@@ -363,7 +363,7 @@ conversation and/or an OpenClaw task.
   takes over.
 - **Not worn → no voice** (except a fall detected just before removal).
 - **Demo mode** (`mode: demo`): cooldowns 2 min, tremor triggers voice at ≥ 20 s and any
-  severity, and dashboard history is seeded.
+  severity, and history is seeded.
 
 ---
 
@@ -456,7 +456,7 @@ example "AirPods"). If not found, it falls back to the system default and logs a
 |---|---|
 | OPENING | LED manager hands over the LED, then `configure(audio=True)` (light goes solid blue; ~140 ms to first audio). STT and TTS sockets connect in parallel. Target: < 1 s. |
 | SPEAKING | The agent speaks first, from the situation card ("Hi, it's Steady. I noticed your hand has been shaking for a couple of minutes. How are you feeling?"). For freezing, the first thing played is a 4-beat walking cue ("step... step... step... step"). |
-| LISTENING | Interim text goes to the dashboard. The turn ends on `speech_final` or `UtteranceEnd`. |
+| LISTENING | Interim text is published on the bus. The turn ends on `speech_final` or `UtteranceEnd`. |
 | THINKING | Stream the Ollama reply; the first sentence goes to TTS as soon as it's complete. |
 | Interruption | While SPEAKING, a `SpeechStarted` followed by ≥ 2 interim words: stop the player, send TTS `Clear`, cancel the LLM stream, go to LISTENING. Headphones prevent the agent hearing itself. If config falls back to speakers, interruptions are off and STT is ignored while speaking. |
 | CHECKING_SILENCE | 12 s without speech after a question: the agent asks once more, simpler ("Can you hear me? Just say yes or no."). Second silence: urgent → ESCALATING; otherwise CLOSING with outcome `no_response`. A **single band tap** counts as "yes, I'm OK" at any time. |
@@ -521,7 +521,7 @@ re-applies it after reconnects.
 | **Person stops → agent starts speaking** | **≤ 1.7 s** |
 | Interruption → silence | ≤ 150 ms |
 
-Each turn's timings are stored in `turns.latency_ms` and shown on the dashboard.
+Each turn's timings are stored in `turns.latency_ms` and printed by `steady talk`.
 
 ---
 
@@ -616,6 +616,27 @@ created ─▶ (tier 1) needs_confirmation ─▶ confirmed ─▶ sent (hook OK
 - **Idempotency:** the task id is in every message; `task done` on a finished task changes
   nothing.
 
+### 7.5a As built in M6 (this replaces 7.3 to 7.5 above)
+
+`openclaw/README.md` is the current description. In short:
+
+- **Two outgoing paths only.** (1) The wearer asks out loud for a text message or an email to
+  an approved contact, and says yes once. (2) The end-of-day brief to the caregiver, at
+  `brief.time`, by text, email or both. Task types: `message_contact`, `email_contact`,
+  `daily_brief`. **There is no emergency or alert path in M6**; a fall with no answer closes the
+  conversation and nothing is sent. That path is reserved for separate work.
+- **Allowlist.** Only the phone numbers and email addresses in `config/contacts.yaml` can
+  receive anything; delivery re-checks the exact address on every send.
+- **Sent as the wearer.** Texts go through Messages on this Mac (the wearer's own iMessage
+  account); emails go through the wearer's own SMTP account with `From: sender.email`.
+- **Steady delivers, OpenClaw words.** OpenClaw's agent never holds an address. It runs
+  `steadyctl task send <id> --text "..."` and Steady sends.
+- **The OpenClaw agent is locked down** to `steadyctl` and reading files, after a test in
+  which it started Steady by itself.
+- **The brief has a fallback without a model:** if OpenClaw has not written it within two
+  minutes, Steady sends the day's plain numbers.
+- Not built: weekly report, medication reminders, general requests, replies from contacts.
+
 ### 7.6 Security
 
 - Steady's API binds to `127.0.0.1` only, and every request needs
@@ -706,24 +727,22 @@ and on the Mac. Nothing personal is ever written to the band's storage.
 
 ## 9. Local API (`127.0.0.1:8765`, bearer token)
 
+**There is no dashboard and no web page in this project.** Steady is used through the band,
+the headphones and the terminal. The local API exists only so that OpenClaw can fetch and
+deliver tasks through `steadyctl`; every endpoint needs `STEADY_API_TOKEN`.
+
 | Method & path | Purpose | Used by |
 |---|---|---|
-| `GET /api/status` | Band connection, battery, context, open episodes, conversation state | Dashboard, steadyctl |
-| `GET /api/windows?since=` | Recent windows | Dashboard |
-| `GET /api/episodes?since=&kind=` | Episodes | Dashboard, steadyctl |
-| `GET /api/summary?period=` | Text + numbers summary | steadyctl, voice agent |
-| `GET /api/reports/{daily\|weekly}?format=md\|pdf` | Generate a report, return its path | steadyctl |
-| `GET /api/tasks/{id}` / `POST /api/tasks/{id}/status` | Task details / outcome | steadyctl |
-| `GET /api/contacts` | Contact roles | steadyctl |
-| `POST /api/speak` | Queue a short spoken message | steadyctl |
-| `POST /api/led` | `done` flash | steadyctl |
-| `POST /api/conversation/start` | Start a conversation (for testing and demo) | Dashboard |
-| `WS /ws/live` | Live features, detections, transcript, latency (no raw audio) | Dashboard |
+| `GET /api/tasks/{id}` | Claim a task: request, recipient name, facts, instructions | steadyctl |
+| `POST /api/tasks/{id}/send` | Deliver the task's message to its approved recipient | steadyctl |
+| `POST /api/tasks/{id}/status` | Report done or failed | steadyctl |
+| `GET /api/tasks` | Recent tasks and their status | steadyctl |
+| `GET /api/contacts` | Approved contacts: names and roles only | steadyctl |
+| `GET /api/summary?period=` | Symptom summary, text and numbers | steadyctl |
+| `POST /api/brief` | Send today's brief now | `python -m steady brief` |
 
-**Dashboard** (`src/web/`, served at `/`): live motion trace and frequency spectrum with the
-tremor band highlighted, context, episode timeline, live transcript of the current
-conversation, task list with states, today's rollup charts, and the band/battery/connection
-status. It reads only from the API and never connects to the band.
+To see what Steady is doing, use the terminal log of `python -m steady run`, the database
+(`data/steady.db`), and the reports of `steady validate` and `steady talk`.
 
 ---
 
@@ -814,8 +833,6 @@ vexo/
       sim/
         scenarios.py          scripted pretend-band days (see §12)
       ctl.py                  steadyctl
-    web/
-      index.html  app.js  style.css
   openclaw/
     skills/steady/SKILL.md
     config.example.json5      hooks + ollama-cloud provider (no secrets)
@@ -875,7 +892,7 @@ M3 and M6 can be built in parallel once M0 is done.
 | **M4** | Voice conversation | STT subclass, Ollama client with tools, voice agent, conversation state machine, interruptions, silence handling | Double-tap → full conversation with band 03; `end_conversation` only when OK; latency ≤ 1.7 s |
 | **M5** | Policy | Severity, rules, cooldowns, quiet hours, pre-emption; detections open conversations | `rest_tremor` and `fall` scenarios open the right conversation automatically |
 | **M6** | OpenClaw | Local API + auth, `steadyctl`, `steady` skill, hook client, task lifecycle, approval tiers; OpenClaw set up with ollama-cloud + Telegram | Voice "tell Priya..." → confirm by tap → message arrives; fall + silence → automatic alert |
-| **M7** | Reports + dashboard | Summary, daily/weekly reports with charts, dashboard live view, OpenClaw scheduled jobs | Daily brief arrives on Telegram with correct numbers |
+| **M7** | Reports | Weekly report with charts (the daily brief was built in M6). No dashboard. | A weekly report file with correct numbers |
 | **M8** | Real band hardening | Calibration flow, threshold tuning on band 03, battery measurement over 2 h, demo mode, seeded history | Demo script (§14) runs 3 times in a row without a failure |
 | Stretch | | Dyskinesia, slowness, freezing, wearing-off, gait trends | Each behind a config flag, labelled experimental |
 
@@ -883,10 +900,10 @@ M3 and M6 can be built in parallel once M0 is done.
 
 ## 14. Demo script (about 3 minutes)
 
-1. **Screening.** Band on the judge's wrist, dashboard on screen: windows logging every 2 s,
-   context "rest", flat spectrum. The band breathes green.
-2. **Tremor.** The judge rests their arm and fakes a slow shake. The spectrum peak jumps at
-   ~5 Hz, an episode opens, the band flashes amber, then turns blue. In the headphones:
+1. **Screening.** Band on the judge's wrist; the terminal log shows a status line every 10 s,
+   context "rest". The band breathes green.
+2. **Tremor.** The judge rests their arm and fakes a slow shake. The log reports a
+   ~5 Hz rest tremor, an episode opens, the band flashes amber, then turns blue. In the headphones:
    *"Hi, it's Steady. I noticed your hand has been shaking for a bit. How are you feeling?"*
    A short real conversation; the agent logs it and ends when they say they're OK.
 3. **Delegation.** The judge double-taps: *"Tell my daughter I'm having a shaky afternoon."*
@@ -895,8 +912,8 @@ M3 and M6 can be built in parallel once M0 is done.
 4. **Fall.** The judge drops their arm onto a cushion and stays silent. Headphones: *"Are you
    OK?"*... *"Can you hear me?"*... The phone buzzes: *"Possible fall detected at 3:42 PM, no
    response to voice check. Steady is still listening."* Headphones: *"I've let Priya know."*
-5. **Report.** On the dashboard, the episode timeline and a generated daily brief with the
-   numbers that were just measured.
+5. **Brief.** `python -m steady brief` sends the end-of-day brief with the numbers that were
+   just measured.
 
 Backup: the same script on the pretend band (`python -m steady sim demo`), if Bluetooth or
 the venue Wi-Fi fails.
@@ -909,10 +926,10 @@ the venue Wi-Fi fails.
 |---|---|
 | False alarms (normal movement looks like tremor) | Context gating; four-part tremor rule; hysteresis; `calm_day` and `brushing_teeth` scenarios as tests; cooldowns |
 | Thresholds wrong on the real band | Calibration flow (§4.9); all thresholds in config; tune in M8 |
-| Bluetooth drops / out of range | Auto-reconnect + supervisor; gaps logged; dashboard prompt to double-tap |
+| Bluetooth drops / out of range | Auto-reconnect + supervisor; gaps logged; the log prompts to double-tap |
 | Mac sleeps | `caffeinate`; lid must stay open (stated in setup) |
 | Audio + 208 Hz motion overload the link | Watch `stream-dropped`; fall back to 100 Hz during conversations |
-| Battery life on continuous streaming | Measure in M8; eco mode; battery shown on the dashboard |
+| Battery life on continuous streaming | Measure in M8; eco mode; battery logged with each assessment |
 | Venue network slow or down | Latency shown per turn; pretend-band backup demo; urgent path still logs and notifies locally |
 | LLM says something unsafe | Prompt rules; tools-only actions; approval tiers; `end_conversation` check |
 | OpenClaw down | Urgent tasks fail loudly (voice + macOS notification); retries |

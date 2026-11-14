@@ -77,3 +77,11 @@ CREATE TABLE IF NOT EXISTS tasks (
   payload_json TEXT NOT NULL, openclaw_run_id TEXT, result_note TEXT, attempts INTEGER DEFAULT 0,
   conversation_id INTEGER, episode_id INTEGER
 );
+
+-- Every message Steady delivered (or tried to) for an OpenClaw task. M6.
+CREATE TABLE IF NOT EXISTS deliveries (
+  id INTEGER PRIMARY KEY, task_id INTEGER NOT NULL, t REAL NOT NULL, ok INTEGER NOT NULL,
+  channel TEXT, to_role TEXT, by TEXT,                 -- by: openclaw | steady_fallback
+  subject TEXT, text TEXT, detail TEXT
+);
+CREATE INDEX IF NOT EXISTS deliveries_task ON deliveries (task_id);

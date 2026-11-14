@@ -110,8 +110,7 @@ def _metronome(hz: float, seconds: float) -> None:
         sd.play(buf, rate)
 
 
-async def run(cfg: Config, live: bool = False, only: list[str] | None = None, gap_s: float = 8.0,
-              dashboard: bool = False) -> int:
+async def run(cfg: Config, live: bool = False, only: list[str] | None = None, gap_s: float = 8.0) -> int:
     todo = [p for p in phases() if (not only or p.key in only) and (not live or p.live)]
     if not todo:
         print("no phases selected")
@@ -123,15 +122,6 @@ async def run(cfg: Config, live: bool = False, only: list[str] | None = None, ga
     await steady.writer.start()
     tasks = [asyncio.create_task(steady.band.run(), name="band"),
              asyncio.create_task(steady.screener.run(), name="screener")]
-    server = None
-    if dashboard:
-        import uvicorn
-        from ..api.server import create_app
-        server = uvicorn.Server(uvicorn.Config(create_app(steady), host="127.0.0.1", port=int(cfg.get("api.port", 8765)),
-                                               log_level="warning", lifespan="off", timeout_graceful_shutdown=2))
-        server.install_signal_handlers = lambda: None
-        tasks.append(asyncio.create_task(server.serve(), name="api"))
-
     windows: list[dict] = []
     episodes: list[dict] = []
     q = steady.bus.subscribe("window", "episode.started")
@@ -199,9 +189,6 @@ async def run(cfg: Config, live: bool = False, only: list[str] | None = None, ga
         await steady.band.stop()
         with contextlib.suppress(Exception):
             await asyncio.wait_for(asyncio.shield(tasks[0]), 5)
-        steady.bus.publish("shutdown", None)
-        if server:
-            server.should_exit = True
         for t in tasks:
             if not t.done():
                 t.cancel()
@@ -258,6 +245,6 @@ def report(results: list[Result], live: bool, steady: Steady) -> int:
         "key": r.phase.key, "title": r.phase.title, "expect": r.phase.expect, "detected": r.detected,
         "passed": r.passed, "limit": r.phase.limit, "t0": r.t0, "t1": r.t1, "valid_windows": len(r.valid),
         "flagged": r.flagged(), "episodes": r.episodes,
-        "windows": [{k: v for k, v in w.items() if k != "spectrum"} for w in r.windows]} for r in results], indent=1))
+        "windows": r.windows} for r in results], indent=1))
     print(f"\nSaved: {Path(stem).relative_to(ROOT)}.md / .json")
     return 0 if all(r.passed for r in scored) else 1

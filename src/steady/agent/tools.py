@@ -31,6 +31,9 @@ class ConversationState:
     outcome: str | None = None
     summary: str = ""
     logs: list[dict] = field(default_factory=list)
+    pending_task: int | None = None      # a task waiting for the person's yes
+    user_turns: int = 0                  # how many times the person has spoken or tapped
+    pending_since_turn: int = 0          # user_turns when the pending task was created
 
 
 def _fn(name: str, description: str, properties: dict, required: list[str]) -> dict:
@@ -51,6 +54,17 @@ SPECS = [
     _fn("record_wellbeing", "Record how the person says they feel right now.",
         {"feeling": {"type": "string", "enum": ["ok", "unsure", "not_ok"]},
          "notes": {"type": "string"}}, ["feeling"]),
+    _fn("list_contacts", "The people Steady can message or email for the wearer: names, roles and how they are reached.",
+        {}, []),
+    _fn("request_task", "Send a text message or an email to one of the wearer's approved contacts, in the wearer's "
+        "name. It always needs the wearer's yes first: this returns a confirm_prompt to ask.",
+        {"type": {"type": "string", "enum": ["message_contact", "email_contact"],
+                  "description": "message_contact = a text message; email_contact = an email"},
+         "to": {"type": "string", "description": "Who: an approved contact's name or role (see list_contacts)."},
+         "request": {"type": "string", "description": "What to say, in the wearer's words, short."}},
+        ["type", "to", "request"]),
+    _fn("confirm_task", "Pass on the wearer's answer to a confirm_prompt. A single tap on the band means yes.",
+        {"task_id": {"type": "integer"}, "confirmed": {"type": "boolean"}}, ["task_id", "confirmed"]),
     _fn("end_conversation", "End this conversation. Say goodbye first.",
         {"outcome": {"type": "string", "enum": ["ok", "follow_up", "needs_help"]},
          "summary": {"type": "string", "description": "One sentence: what happened and how the person is."}},
@@ -104,33 +118,52 @@ class Toolbox:
         }
 
     async def _get_summary(self, period: str = "today") -> dict:
-        now = time.time()
-        since = {"last_hour": now - 3600, "week": now - 7 * 86400}.get(
-            period, time.mktime(time.localtime(now)[:3] + (0, 0, 0, 0, 0, -1)))
-        await self.steady.writer.flush()
-        self.steady.screener.rollup.flush()
-        await self.steady.writer.flush()
-        rolls = await asyncio.to_thread(
-            self._query, "SELECT * FROM hourly_rollups WHERE hour_start >= ?", (since - 3600,))
-        eps = await asyncio.to_thread(
-            self._query, "SELECT kind, severity, duration_s FROM episodes WHERE started_at >= ?", (since,))
-        tot = lambda k: round(sum(r[k] or 0 for r in rolls))  # noqa: E731
-        by_kind: dict[str, dict] = {}
-        for e in eps:
-            k = by_kind.setdefault(e["kind"], {"count": 0, "total_seconds": 0})
-            k["count"] += 1
-            k["total_seconds"] += round(e["duration_s"] or 0)
-        rest = tot("rest_s")
-        return {
-            "period": period,
-            "minutes_monitored": round(tot("worn_s") / 60, 1),
-            "minutes_arm_resting": round(rest / 60, 1),
-            "rest_tremor_seconds": tot("rest_tremor_s"),
-            "rest_tremor_percent_of_resting_time": round(100 * tot("rest_tremor_s") / rest, 1) if rest else None,
-            "steps": tot("steps"),
-            "falls_suspected": tot("falls"),
-            "episodes": by_kind,
-        }
+        from ..summary import summarize
+        return await summarize(self.steady, period)
+
+    def _tasks(self):
+        tasks = getattr(self.steady, "tasks", None)
+        if tasks is None:
+            raise RuntimeError("tasks unavailable")
+        return tasks
+
+    async def _list_contacts(self) -> dict:
+        try:
+            return {"contacts": self._tasks().contacts.public()}
+        except RuntimeError:
+            return {"error": "Sending messages is not available right now."}
+
+    async def _request_task(self, type: str, request: str, to: str | None = None, **_ignored) -> dict:
+        from ..actions.tasks import TaskError
+        if type not in ("message_contact", "email_contact"):
+            return {"error": "You can only send a text message (message_contact) or an email (email_contact)."}
+        try:
+            s = self.state
+            out = await self._tasks().create(type, request, to=to, origin="voice", conversation_id=s.id)
+        except RuntimeError:
+            return {"error": "Sending messages is not available right now. Tell the person you cannot do it."}
+        except TaskError as e:
+            return {"error": str(e)}
+        self.state.pending_task = out["id"]
+        self.state.pending_since_turn = self.state.user_turns
+        return {"task_id": out["id"], "status": out["status"], "needs_confirmation": True,
+                "recipient": out["recipient"]["name"], "confirm_prompt": out["confirm_prompt"]}
+
+    async def _confirm_task(self, task_id: int, confirmed: bool) -> dict:
+        from ..actions.tasks import TaskError
+        s = self.state
+        if confirmed and s.pending_task == int(task_id) and s.user_turns <= s.pending_since_turn:
+            # a hard rule, not a prompt: a yes can only come from the person, after they were asked
+            return {"error": "The person has not answered yet. Ask them, wait for their answer, then confirm."}
+        try:
+            out = await self._tasks().confirm(int(task_id), bool(confirmed))
+        except (RuntimeError, ValueError):
+            return {"error": "No such task."}
+        except TaskError as e:
+            return {"error": str(e)}
+        self.state.pending_task = None
+        return {"task_id": out["id"], "status": out["status"],
+                "note": "Approved and started; it is on its way, not sent yet." if confirmed else "Cancelled."}
 
     async def _log_entry(self, kind: str, details: str) -> dict:
         if kind not in ("medication", "symptom", "note"):

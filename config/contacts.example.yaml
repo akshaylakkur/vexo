@@ -1,0 +1,27 @@
+# Copy to config/contacts.yaml (never committed) and fill in.
+#
+# This file is the allowlist. Only the phone numbers and email addresses written here can
+# ever receive a message from Steady, and everything goes out as you:
+#   text messages  from your own iMessage account on this Mac (Messages must be signed in)
+#   emails         from sender.email, through your own mail account (smtp below)
+# Phone numbers in full international form: +14155550123.
+
+sender:
+  name: Akshay                  # how messages refer to you
+  phone: "+14155550100"         # your own iMessage number
+  email: you@example.com        # every email is sent From this address
+
+smtp:                           # your mail account. The password is NOT here: put
+  host: smtp.gmail.com          #   STEADY_SMTP_PASSWORD=<app password>   in .env
+  port: 587
+  username: you@example.com
+  security: starttls            # starttls (587) or ssl (465)
+
+contacts:
+  caregiver:                    # the role; the end-of-day brief goes to brief.to (default: caregiver)
+    name: Priya
+    phone: "+14155550123"
+    email: priya@example.com
+  doctor:
+    name: Dr. Patel
+    email: patel@clinic.example
