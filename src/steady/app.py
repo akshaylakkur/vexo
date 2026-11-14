@@ -20,6 +20,7 @@ from .band.ingest import RingBuffer
 from .band.manager import BandManager
 from .bus import Bus
 from .config import Config
+from .policy.engine import PolicyEngine
 from .screening.screener import Screener
 from .store.db import Writer
 from .voice.service import VoiceService
@@ -36,6 +37,7 @@ class Steady:
         self.band = BandManager(cfg, self.bus, self.writer, self.ring)
         self.screener = Screener(cfg, self.bus, self.writer, self.ring, self.band)
         self.voice = VoiceService(self)
+        self.policy = PolicyEngine(self)
 
     async def run(self, with_api: bool = True) -> None:
         await self.writer.start()
@@ -56,7 +58,7 @@ class Steady:
             log.info("dashboard: http://%s:%d/", host, port)
         tasks.append(asyncio.create_task(self.band.run(), name="band"))
         tasks.append(asyncio.create_task(self.screener.run(), name="screener"))
-        tasks.append(asyncio.create_task(self.voice.watch_double_tap(), name="voice"))
+        tasks.append(asyncio.create_task(self.policy.run(), name="policy"))
 
         stop = asyncio.Event()
         loop = asyncio.get_running_loop()

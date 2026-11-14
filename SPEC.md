@@ -365,6 +365,17 @@ conversation and/or an OpenClaw task.
 - **Demo mode** (`mode: demo`): cooldowns 2 min, tremor triggers voice at ≥ 20 s and any
   severity, and dashboard history is seeded.
 
+**As built in M5** (`policy/rules.py`, `policy/engine.py`): the fall and tremor rules, every
+guardrail above, and the double-tap trigger. The tracker publishes `episode.updated` every
+window, so a tremor check-in opens the moment the episode reaches 60 s. Each episode gets one
+decision once it reaches `concern`. Falls ignore cooldowns, quiet hours and the hourly limit.
+A finding held back by quiet hours, the hourly limit, a running conversation or a band out of
+reach is mentioned at the start of the next conversation ("I also noticed..."); one held back
+by its cooldown is not. Pre-emption closes the running conversation as `preempted`, and the
+urgent one opens with the apology. Rules for freezing, dyskinesia, slow periods, wearing-off
+and "tremor time > 2 × baseline" wait for their detectors (M8 calibration for the baseline);
+seeded demo history is M8.
+
 ---
 
 ## 6. The voice loop

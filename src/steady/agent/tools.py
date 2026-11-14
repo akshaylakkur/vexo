@@ -31,6 +31,7 @@ class ConversationState:
     outcome: str | None = None
     summary: str = ""
     logs: list[dict] = field(default_factory=list)
+    notes: list[str] = field(default_factory=list)   # extra [notes] for the opening, from the policy
 
 
 def _fn(name: str, description: str, properties: dict, required: list[str]) -> dict:
