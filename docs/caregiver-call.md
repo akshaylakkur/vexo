@@ -1,5 +1,26 @@
 # Steady: outbound caregiver phone call with a Deepgram voice agent
 
+> **As built (branch `caregiver-call`):** Steady places the call itself, as recommended below,
+> but runs it with **Pipecat 1.16** (Twilio media stream, Deepgram Nova-3 listening, Deepgram
+> Aura-2 speaking, Ollama Cloud through its OpenAI-compatible `/v1` endpoint) instead of the
+> Deepgram Voice Agent API. That keeps Ollama and the tools in Python, and "press 1" works.
+> Code: `src/steady/call/`. Tests: `tests/test_call.py`.
+>
+> **Trigger:** an urgent (fall) conversation that ends with no answer, or with "needs help".
+> Calls `caregiver`, then `backup_caregiver`, and records a `tasks` row (`caregiver_call`, tier 2)
+> that ends `done` (someone confirmed) or `failed`. OpenClaw's Telegram `caregiver_alert` (M6) can
+> run alongside it; nothing here depends on OpenClaw.
+>
+> **Setup:**
+> 1. `.env`: `TWILIO_ACCOUNT_SID`, `TWILIO_AUTH_TOKEN`, `TWILIO_FROM_NUMBER` (a voice number on
+>    the account), plus the existing `DEEPGRAM_API_KEY` and `OLLAMA_API_KEY`.
+> 2. `cp config/contacts.example.yaml config/contacts.yaml` and fill in names and phone numbers.
+>    On a Twilio trial account, verify each number in the Twilio console first.
+> 3. `brew install cloudflared`. Steady opens a quick tunnel to the call server (port 8766) at
+>    startup; only the call server is public, never the dashboard API. Or set `call.public_url`.
+> 4. `python -m steady doctor`, then `python -m steady call --to caregiver` for a test call.
+>    The pretend band (`--sim`) never phones anyone.
+
 Research for the M6 (OpenClaw) owner. Date: 2026-11-14. No code in the repo was changed.
 Spec sections read: SPEC.md 5 (policy), 6.3 to 6.6 (voice agent and tools), 7 (OpenClaw action loop), 10 (config and secrets).
 

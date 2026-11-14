@@ -550,6 +550,11 @@ Each turn's timings are stored in `turns.latency_ms` and shown on the dashboard.
 OpenClaw never computes symptom metrics itself. It asks Steady for them, so numbers in
 messages always match the database.
 
+**As built (caregiver phone call, branch `caregiver-call`):** besides OpenClaw's messages,
+Steady itself phones the caregiver (then the backup) after a fall with no answer or "needs help",
+with Twilio + Pipecat + Deepgram + Ollama, and records a `caregiver_call` task (tier 2). See
+`docs/caregiver-call.md`.
+
 ### 7.2 Integration
 
 **Steady → OpenClaw:** OpenClaw's gateway hooks, `POST /hooks/agent` on loopback, with a

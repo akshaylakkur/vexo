@@ -49,6 +49,13 @@ policy:                         # what a detection does besides being logged (SP
   tremor_min_severity: concern  # ...and moderate or worse (concern); mild is logged only
   demo: { cooldown_min: { default: 2 }, tremor_min_s: 20, tremor_min_severity: notice }   # mode: demo
 
+call:                           # phone the caregiver after a possible fall with no answer (Twilio + Pipecat + Deepgram)
+  enabled: true                 # needs TWILIO_* in .env and a phone number in config/contacts.yaml
+  port: 8766                    # the call server; the only thing the internet can reach, through the tunnel
+  public_url: ""                # empty: start a cloudflared quick tunnel; or a fixed https address
+  ring_seconds: 25              # ring this long before trying the next person
+  max_call_seconds: 180
+
 context:
   rest_vol_rms_dps: 10.0        # gyro RMS in 0.5-3 Hz below this = arm at rest (calibration overrides)
   walking_min_cadence: 60

@@ -19,6 +19,7 @@ from .api.server import create_app, dashboard_built
 from .band.ingest import RingBuffer
 from .band.manager import BandManager
 from .bus import Bus
+from .call.caller import CaregiverCaller
 from .config import Config
 from .policy.engine import PolicyEngine
 from .screening.screener import Screener
@@ -38,6 +39,7 @@ class Steady:
         self.screener = Screener(cfg, self.bus, self.writer, self.ring, self.band)
         self.voice = VoiceService(self)
         self.policy = PolicyEngine(self)
+        self.caller = CaregiverCaller(self)
 
     async def run(self, with_api: bool = True) -> None:
         await self.writer.start()
@@ -59,6 +61,7 @@ class Steady:
         tasks.append(asyncio.create_task(self.band.run(), name="band"))
         tasks.append(asyncio.create_task(self.screener.run(), name="screener"))
         tasks.append(asyncio.create_task(self.policy.run(), name="policy"))
+        tasks.append(asyncio.create_task(self.caller.start(), name="caller"))   # call server + tunnel; never raises
 
         stop = asyncio.Event()
         loop = asyncio.get_running_loop()
@@ -94,6 +97,7 @@ class Steady:
             with contextlib.suppress(asyncio.CancelledError, Exception):
                 await t
         await self.voice.close()
+        await self.caller.stop()
         await self.writer.close()
         if caffeinate:
             caffeinate.terminate()

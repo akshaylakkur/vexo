@@ -1,0 +1,13 @@
+# Copy to config/contacts.yaml (not in git) and fill in. Phone numbers in international form.
+# On a Twilio trial account, every number here must first be verified in the Twilio console.
+
+wearer:
+  name: Margaret                # how Steady refers to the wearer on calls
+
+caregiver:                      # called first after a possible fall with no answer
+  name: Priya
+  phone: "+15551234567"
+
+backup_caregiver:               # called if the caregiver doesn't confirm
+  name: Sam
+  phone: "+15557654321"

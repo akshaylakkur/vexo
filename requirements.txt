@@ -11,3 +11,4 @@ uvicorn[standard]
 pyyaml
 certifi
 pytest
+pipecat-ai[deepgram,ollama,silero,websocket]==1.16.0
