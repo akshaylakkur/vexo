@@ -38,6 +38,25 @@ flowchart LR
   O --> M[iMessage / email<br/>allowlist only]
 ```
 
+## Pipecat: the caregiver call
+
+When a check-in goes unanswered, Steady places a Twilio call and hands the line to a Pipecat 1.16 pipeline ([`src/steady/call/bot.py`](src/steady/call/bot.py)):
+
+```
+Twilio audio in → Keypad → Deepgram STT → Ears → context → Ollama → Mouth → Deepgram TTS → Twilio audio out
+```
+
+| Step | What it does |
+|---|---|
+| `FastAPIWebsocketTransport` + `TwilioFrameSerializer` | Twilio's media stream (8 kHz μ-law) in and out; hangs up the call when the pipeline ends |
+| `Keypad` | Pressing 1 confirms at once, whatever the model is doing |
+| `DeepgramSTTService` | Nova-3 transcribes the caregiver, boosted for the wearer's and caregiver's names |
+| `Ears` | Steady's own turn-taking: a turn ends after a 1 s pause in the words, so a noisy room can't stall it |
+| `OLLamaLLMService` | Ollama Cloud with four tools only: `confirm_checking`, `get_latest_status` (what the band shows right now), `nothing_for_me` (background talk), `end_call` |
+| `Mouth` + `DeepgramTTSService` | Aura-2 speaks; everything Steady says on the call is logged |
+
+Steady speaks first, says what happened, answers questions only from the facts and the band's live status, and never gives medical advice. Nobody answering twice ends the call, then Steady tries the backup caregiver. Each call is a `tasks` row that ends `done` (who confirmed, and how) or `failed` (why).
+
 ## Detection
 
 - **Rest tremor:** a 3.5 to 7.5 Hz rhythm in the gyroscope while the arm is at rest, strong enough and concentrated in one peak. An episode starts after 3 of 5 positive windows (about 10 s).
