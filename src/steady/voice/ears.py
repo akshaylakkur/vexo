@@ -24,7 +24,6 @@ log = logging.getLogger("steady.voice")
 
 
 class Ears:
-    interruptible = True                 # can the person talk over the agent?
 
     def __init__(self) -> None:
         self.events: asyncio.Queue = asyncio.Queue()
@@ -38,8 +37,6 @@ class Ears:
 
 class ScriptEars(Ears):
     """Lines 'said' one per turn. '<tap>' taps the band, '<silence>' says nothing."""
-
-    interruptible = False
 
     def __init__(self, lines: list[str], delay_s: float = 0.4) -> None:
         super().__init__()

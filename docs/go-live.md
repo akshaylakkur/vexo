@@ -109,3 +109,29 @@ PYTHONPATH=src .venv/bin/python -m steady run --demo
 - The call's public address is a new `cloudflared` quick tunnel on every start, so nothing
   needs configuring; it takes about 10 seconds to come up.
 - A text only reaches someone who uses iMessage, unless your iPhone forwards SMS to this Mac.
+
+## The demo, start to finish
+
+Two terminal tabs (macOS Terminal, or the Terminal pane in the Claude app):
+
+```bash
+PYTHONPATH=src .venv/bin/python -m steady openclaw gateway --profile steadytest --port 19789
+PYTHONPATH=src .venv/bin/python -m steady run --demo
+```
+
+`delivery.mode` must be `live` in `config/local.yaml`, or nobody is phoned and nothing is sent.
+
+1. Rest your forearm and shake only the hand, about 5 times a second, for 15 to 20 seconds.
+   Steady speaks first: what it noticed, and an offer of help. Say you are fine; it ends.
+2. Wait about 30 seconds. Shake again the same way. Say nothing. Steady asks, waits 12 seconds,
+   asks once more, waits 12 seconds, then says it is phoning the caregiver.
+3. The caregiver's phone rings from the Twilio number. Steady speaks first and cannot be
+   interrupted; then it is a conversation of up to 3 minutes. Saying yes (or pressing 1) confirms.
+4. A text and an email go to the caregiver, and Steady says so in the headphones.
+
+The whole thing without a band, to rehearse (the pretend band plays the tremor):
+
+```bash
+PYTHONPATH=src .venv/bin/python -m steady.validate.demo           # dry run
+PYTHONPATH=src .venv/bin/python -m steady.validate.demo --live    # real call, text and email
+```

@@ -275,8 +275,8 @@ def test_latest_status_tells_the_caregiver_what_the_band_sees_now():
 
 # ---- when it happens -----------------------------------------------------------------------
 
-def test_a_fall_with_no_answer_or_a_call_for_help_phones_the_caregiver():
-    alerts = []
+def test_a_symptom_nobody_answers_or_a_call_for_help_phones_the_caregiver_then_reports():
+    alerts, reports = [], []
 
     class Voice:
         running = None
@@ -290,25 +290,42 @@ def test_a_fall_with_no_answer_or_a_call_for_help_phones_the_caregiver():
 
     async def alert(what, t, **kw):
         alerts.append((what, kw))
+        return len(alerts) == 1                                   # the first call is confirmed, the others are not
+
+    async def create(task_type, request, **kw):
+        reports.append((task_type, kw))
 
     def engine_for(out):
         steady = SimpleNamespace(cfg=config_mod.load(), voice=Voice(out), writer=SimpleNamespace(execute=lambda *a: None),
-                                 caller=SimpleNamespace(alert=alert))
+                                 caller=SimpleNamespace(alert=alert, last_notes=["Priya confirmed (said yes)"]),
+                                 tasks=SimpleNamespace(create=create))
         return PolicyEngine(steady)
 
-    fall = {"id": 3, "kind": "fall_suspected", "started_at": time.time()}
+    now = time.time()
+    fall = {"id": 3, "kind": "fall_suspected", "started_at": now}
+    tremor = {"id": 4, "kind": "rest_tremor", "started_at": now, "duration_s": 25, "metrics": {"grade": "moderate", "freq_mean_hz": 5.0}}
     outcome = lambda **kw: SimpleNamespace(**{"id": 5, "summary": "", "escalated": False, **kw})  # noqa: E731
 
     async def go():
         await engine_for(outcome(outcome="no_response", escalated=True))._converse("episode", fall, True, [])
         await engine_for(outcome(outcome="needs_help", summary="She cannot get up."))._converse("episode", fall, True, [])
-        await engine_for(outcome(outcome="ok"))._converse("episode", fall, True, [])                  # she is fine
-        await engine_for(outcome(outcome="needs_help"))._converse("episode", {"id": 4}, False, [])    # not a fall
+        await engine_for(outcome(outcome="no_response", escalated=True))._converse("episode", tremor, False, [])   # a tremor nobody answers
+        await engine_for(outcome(outcome="ok"))._converse("episode", fall, True, [])                  # she is fine: no call
+        await engine_for(outcome(outcome="ok"))._converse("episode", tremor, False, [])               # fine: no call
+        await engine_for(outcome(outcome="no_response"))._converse("double_tap", None, False, [])     # not a symptom: no call
 
     asyncio.run(go())
-    assert len(alerts) == 2
-    assert "got no answer" in alerts[0][0] and alerts[0][1] == {"conversation_id": 5, "episode_id": 3}
+    assert len(alerts) == 3
+    assert "a possible fall" in alerts[0][0] and "got no answer" in alerts[0][0]
+    assert alerts[0][1] == {"conversation_id": 5, "episode_id": 3}
     assert "they said they need help. She cannot get up." in alerts[1][0]
+    assert "shaking of the hand while the arm was resting" in alerts[2][0] and "got no answer" in alerts[2][0]
+    # after every call, a text and an email to the caregiver saying what happened and how the call went
+    assert [r[0] for r in reports] == ["incident_report"] * 3
+    kw = reports[0][1]
+    assert kw["to"] == "caregiver" and kw["origin"] == "call" and kw["channels"] == ["imessage", "email"]
+    assert kw["context"]["someone_is_checking"] is True and kw["context"]["phone_call"] == "Priya confirmed (said yes)"
+    assert reports[2][1]["context"]["someone_is_checking"] is False
 
 
 def test_dry_run_mode_places_no_call_unless_you_ask_for_a_test_call(tmp_path, monkeypatch):
@@ -348,13 +365,11 @@ def test_the_wearer_is_told_about_the_call_and_can_ask_for_it(tmp_path, monkeypa
         await asyncio.gather(*eng._tasks)
         eng._open(trigger="episode", episode=fall, urgent=True)
         await asyncio.gather(*eng._tasks)
-        eng._open(trigger="episode", episode={"id": 4, "kind": "rest_tremor"}, urgent=False)   # a tremor: no call note
+        eng._open(trigger="double_tap")                                    # not a symptom: no call note
         await asyncio.gather(*eng._tasks)
 
     asyncio.run(go())
     assert opened[0]["notes"] == [prompts.CALL_IF_HELP.format(name="Priya")]      # "I need help" will phone Priya
     assert opened[2]["notes"] == []
-    assert said == ["I'm phoning Priya now. Stay where you are.",
-                    "Someone is coming to check on you. Stay where you are.",
-                    "I'm phoning Priya now. Stay where you are.",
-                    "I couldn't reach anyone by phone. If you can, please call for help."]
+    assert said == ["I'm phoning Priya now.", "Someone is coming to check on you.",
+                    "I'm phoning Priya now.", "I couldn't reach anyone by phone. If you can, please call for help."]

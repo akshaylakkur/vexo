@@ -74,7 +74,7 @@ class VoiceService:
                     state, agent, ears, self.speaker, self.steady.writer, self.steady.bus,
                     silence_s=float(silence_s if silence_s is not None else self.cfg.get("voice.silence_s", 12)),
                     max_s=float(max_s) if max_s else 60.0 * float(self.cfg.get("voice.max_minutes", 10)),
-                    interrupt_min_words=int(self.cfg.get("voice.interrupt_min_words", 2)), first_today=first,
+                    first_today=first,
                     gesture_ok=lambda: wrist_calm(getattr(self.steady.screener, "last", None)))
                 self.current = convo
                 if self._preempt:                  # an urgent finding arrived while this one was opening

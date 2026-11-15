@@ -32,6 +32,7 @@ log = logging.getLogger("steady.actions")
 FINAL = ("done", "failed", "cancelled", "expired")
 RETRY_S = (5, 20, 60)
 MAX_SENDS_PER_TASK = 1
+PLAIN_FALLBACK = ("daily_brief", "incident_report")     # if OpenClaw does not write it, Steady sends the plain facts
 
 
 class TaskError(Exception):
@@ -84,6 +85,7 @@ class TaskManager:
         self.confirm_expiry_s = float(cfg.get("openclaw.confirm_expiry_s", 600))
         self.timeout_s = float(cfg.get("openclaw.task_timeout_s", 600))
         self.brief_fallback_s = float(cfg.get("brief.fallback_s", 120))
+        self.report_fallback_s = float(cfg.get("call.report_fallback_s", 45))
         self.max_per_hour = int(cfg.get("delivery.max_per_hour", 20))
         self._sent_times: list[float] = []
         self._dispatching: set[int] = set()
@@ -200,7 +202,7 @@ class TaskManager:
                     t.note = str(e)
                     if i < len(RETRY_S):
                         await asyncio.sleep(RETRY_S[i])
-            if t.type == "daily_brief":
+            if t.type in PLAIN_FALLBACK:
                 await self._plain_brief(t, "OpenClaw could not be reached")
             else:
                 self._set(t, "failed", f"could not reach OpenClaw: {t.note}")
@@ -238,6 +240,12 @@ class TaskManager:
             return (f"Write the email {me} asked for, to {name}: first person as {me}, a clear subject, a short body, "
                     f"signed with {me}'s name. If they asked for numbers, use only those in `context`, exactly." + common)
         both = len(t.channels) > 1
+        if t.type == "incident_report":
+            return (f"Write a short report for {name}, who looks after {me}, about what just happened. Use only the "
+                    "facts in `context` (`what_happened`, `phone_call`, `someone_is_checking`, `at`), inventing nothing: "
+                    "what the wristband detected and when, that Steady checked by voice, and how the phone call went. "
+                    "Plain, calm words, under 500 characters, with a subject. "
+                    f"Start with 'Steady report for {me}'." + third + common)
         return (f"Write today's brief about {me} for {name}, who looks after them. Use only the facts in `context` "
                 "(`summary_text`, `episodes`, `logged_today`), quoting numbers exactly and inventing nothing. Plain, "
                 "warm words; say what the band saw and what was noted, not what it means. "
@@ -305,8 +313,8 @@ class TaskManager:
                 if t.status == "needs_confirmation":
                     if age > self.confirm_expiry_s:
                         self._set(t, "expired", "not confirmed in time")
-                elif t.type == "daily_brief" and not t.delivered and age > self.brief_fallback_s \
-                        and t.id not in self._dispatching:
+                elif t.type in PLAIN_FALLBACK and not t.delivered and t.id not in self._dispatching \
+                        and age > (self.brief_fallback_s if t.type == "daily_brief" else self.report_fallback_s):
                     await self._plain_brief(t, f"OpenClaw had not written it after {self.brief_fallback_s:.0f} s")
                 elif age > self.timeout_s:
                     if t.delivered:
@@ -316,9 +324,14 @@ class TaskManager:
 
     async def _plain_brief(self, t: Task, why: str) -> None:
         """The brief without a model: the day's numbers as plain text."""
-        text = f"Steady brief for {self.wearer}. " + str(t.context.get("summary_text") or "No data today.")
+        if t.type == "incident_report":
+            title = f"Steady report for {self.wearer}"
+            text = (f"{title}. {t.context.get('what_happened', '')} Phone call: {t.context.get('phone_call', 'not placed')}.")
+        else:
+            title = f"Steady brief for {self.wearer}"
+            text = f"{title}. " + str(t.context.get("summary_text") or "No data today.")
         with contextlib.suppress(TaskError):
-            await self._deliver(t, text, f"Steady brief for {self.wearer}", by="steady_plain")
+            await self._deliver(t, text, title, by="steady_plain")
         if t.delivered:
             self._set(t, "done", f"{why}; Steady sent the plain numbers itself")
         else:

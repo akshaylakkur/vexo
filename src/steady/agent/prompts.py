@@ -46,7 +46,7 @@ NOTICED_NOW = ("[While you were talking, the wristband detected: {what}. Tell th
                "noticed, ask how they are feeling, and offer your help in so many words.]")
 OPEN_URGENT = ("[The wristband detected a possible fall. Start now: ask clearly and briefly whether they are OK and "
                "whether they can answer you.]")
-CALL_IF_HELP = ("After this possible fall, Steady can phone {name}. If the person says they are hurt, cannot get up, "
+CALL_IF_HELP = ("Steady can phone {name}. If the person says they are hurt, cannot get up, "
                 "or need help: tell them in one sentence that you are phoning {name} right now and to stay where "
                 "they are, then call end_conversation with outcome needs_help straight away. Steady places the call.")
 OPEN_REQUEST = "[The person double-tapped the band to talk to you. Greet them briefly and ask what you can do.]"

@@ -1,10 +1,12 @@
 """One spoken conversation, from opening to closing (SPEC 6.4).
 
     OPENING -> SPEAKING <-> LISTENING -> THINKING ... -> CLOSING
-                   ^ interruption          silence: ask once more, then close
+                                           silence: ask once more, then close
 
 The agent speaks first. A turn ends when speech-to-text reports a finished utterance.
-Talking over the agent stops it at once. A single tap on the band means "yes / I'm OK", a
+There are no interruptions: Steady always finishes what it is saying, then listens. What the
+person says or taps while it speaks is kept and answered when it has finished. (Only an
+urgent finding, a possible fall, stops a running conversation.) A single tap on the band means "yes / I'm OK", a
 Tilts are ignored. After `silence_s` without an answer the agent asks once more; after a
 second silence the conversation closes as no_response (an urgent one is marked escalated).
 The band's motion stream and the detectors keep running the whole time.
@@ -54,7 +56,7 @@ class Outcome:
 class Conversation:
     def __init__(self, state: ConversationState, agent: VoiceAgent, ears: Ears, speaker: Speaker,
                  writer: Writer, bus: Bus, silence_s: float = 12.0, max_s: float = 600.0,
-                 interrupt_min_words: int = 2, first_today: bool = False, gesture_ok=None) -> None:
+                 first_today: bool = False, gesture_ok=None) -> None:
         self.state = state
         self.agent = agent
         self.ears = ears
@@ -63,7 +65,6 @@ class Conversation:
         self.bus = bus
         self.silence_s = silence_s
         self.max_s = max_s
-        self.interrupt_min_words = interrupt_min_words
         self.first_today = first_today
         self.gesture_ok = gesture_ok            # () -> bool: is the wrist calm enough for a tap to mean a tap?
         self._notes: list[str] = []             # things detected meanwhile, to say at the next pause
@@ -162,6 +163,8 @@ class Conversation:
             strikes = 0
             listening_since = time.monotonic()
             wrapping_up = False
+            held: list[str] = []                 # what the person said while Steady was speaking
+            held_tap = False
             while True:
                 if self._preempted:
                     self._turn("event", "stopped: something urgent needs checking")
@@ -172,6 +175,17 @@ class Conversation:
                     if s.ended:
                         outcome = s.outcome or "ok"
                         break
+                    if held or held_tap:                         # said or tapped while Steady was speaking
+                        text, held, tapped, held_tap = " ".join(held), [], held_tap, False
+                        strikes = 0
+                        self._heard_at = time.perf_counter()
+                        if tapped:
+                            s.tapped_ok = True
+                            self._turn("event", "band tapped once (yes / I'm OK)")
+                        if text:
+                            self._turn("user", text)
+                        self._start_reply(user_text=text or None, note=prompts.TAP if tapped else None)
+                        continue
                     if self._notes:                              # detected meanwhile: say it now, at the pause
                         notes, self._notes = self._notes, []
                         self._turn("event", "symptom detected during the conversation")
@@ -192,8 +206,8 @@ class Conversation:
                 if self._reply is None and time.monotonic() - listening_since > self.silence_s:
                     strikes += 1
                     if strikes >= 2 or wrapping_up:
-                        escalated = s.urgent
-                        self._turn("event", "no answer twice: closing" + (" (urgent: escalated)" if escalated else ""))
+                        escalated = s.urgent or s.trigger == "episode"     # a symptom, and nobody answers
+                        self._turn("event", "no answer twice: closing" + (" (escalated)" if escalated else ""))
                         break
                     self._turn("event", f"no answer for {self.silence_s:.0f} s: asking once more")
                     self._set("checking_silence")
@@ -209,32 +223,30 @@ class Conversation:
                 except asyncio.TimeoutError:
                     continue
 
-                speaking = self._reply is not None and not self._reply.done()
+                # No interruptions: while Steady is thinking or speaking it finishes first. What the
+                # person says or taps meanwhile is kept and answered as soon as it has finished.
+                busy = self._reply is not None
                 if kind == "interim":
-                    self.bus.publish("conversation.turn", {"id": s.id, "role": "user", "text": text, "final": False})
-                    listening_since = time.monotonic()
-                    if speaking and self.ears.interruptible and len(text.split()) >= self.interrupt_min_words:
-                        await self._interrupt()
-                        self._set("listening")
+                    if not busy:
+                        self.bus.publish("conversation.turn", {"id": s.id, "role": "user", "text": text, "final": False})
+                        listening_since = time.monotonic()
                 elif kind == "final" and text.strip():
-                    await self._interrupt()
+                    if busy:
+                        held.append(text.strip())
+                        continue
                     strikes = 0
                     self._heard_at = time.perf_counter()
                     self._turn("user", text.strip())
                     self._start_reply(user_text=text.strip())
-                elif kind == "band":
-                    if text == "tap":
-                        await self._interrupt()
-                        strikes = 0
-                        s.tapped_ok = True
-                        self._heard_at = time.perf_counter()
-                        self._turn("event", "band tapped once (yes / I'm OK)")
-                        self._start_reply(note=prompts.TAP)
-                    elif text == "double-tap" and speaking:
-                        await self._interrupt()
-                        self._turn("event", "band double-tapped: agent stopped")
-                        self._set("listening")
-                        listening_since = time.monotonic()
+                elif kind == "band" and text == "tap":
+                    if busy:
+                        held_tap = True
+                        continue
+                    strikes = 0
+                    s.tapped_ok = True
+                    self._heard_at = time.perf_counter()
+                    self._turn("event", "band tapped once (yes / I'm OK)")
+                    self._start_reply(note=prompts.TAP)
                 elif kind == "error":
                     self._turn("event", "speech-to-text stopped")
                     outcome = "follow_up"

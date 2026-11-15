@@ -46,6 +46,7 @@ class CallSession:
     status: str = "created"                       # Twilio's last CallStatus
     how: str = ""                                 # how they confirmed, or why not
     heard: list[str] = field(default_factory=list)
+    said: list[str] = field(default_factory=list)
 
     def acknowledge(self, how: str) -> None:
         if not self.acknowledged.is_set():

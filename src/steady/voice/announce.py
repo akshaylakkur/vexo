@@ -60,9 +60,10 @@ class Announcer:
             if t["status"] == "done":
                 text = {"message_contact": f"Your message to {who} has been sent.",
                         "email_contact": f"Your email to {who} has been sent.",
-                        "daily_brief": f"Today's brief has been sent to {who}."}.get(t["type"], "That is done.")
+                        "daily_brief": f"Today's brief has been sent to {who}.",
+                        "incident_report": f"I've also sent {who} a text and an email about it."}.get(t["type"], "That is done.")
             else:
                 what = {"message_contact": "your message", "email_contact": "your email",
-                        "daily_brief": "today's brief"}.get(t["type"], "that")
+                        "daily_brief": "today's brief", "incident_report": "the report"}.get(t["type"], "that")
                 text = f"Sorry, I couldn't send {what} to {who}."
             self.queue(text)

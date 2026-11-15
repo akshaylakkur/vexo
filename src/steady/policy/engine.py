@@ -86,7 +86,7 @@ class PolicyEngine:
             notes.append(prompts.ALSO_NOTICED.format(what="; ".join(self.deferred[-5:])))
             self.deferred.clear()
         caller = getattr(self.steady, "caller", None)
-        if urgent and caller is not None and getattr(caller, "ready", False) and caller.who():
+        if trigger == "episode" and caller is not None and getattr(caller, "ready", False) and caller.who():
             notes.append(prompts.CALL_IF_HELP.format(name=caller.who()[0]))      # "I need help" then phones them
         task = asyncio.create_task(self._converse(trigger, episode, urgent, notes), name="conversation")
         self._tasks.add(task)
@@ -100,33 +100,50 @@ class PolicyEngine:
             return
         if out is not None and out.id is not None and episode and episode.get("id") is not None:
             self.steady.writer.execute("UPDATE episodes SET conversation_id=? WHERE id=?", (out.id, episode["id"]))
-        if out is not None and urgent and (out.escalated or out.outcome == "needs_help"):
+        if out is not None and trigger == "episode" and (out.escalated or out.outcome == "needs_help"):
             await self._call_caregiver(episode or {}, out)
 
     async def _call_caregiver(self, episode: dict, out) -> None:
-        """After a possible fall: no answer, or the person needs help. Phone the caregiver."""
+        """A symptom check-in got no answer twice, or the person said they need help: phone the
+        caregiver, tell the wearer, then send the caregiver a text and an email about it."""
         t = episode.get("started_at") or time.time()
-        at = time.strftime("%H:%M", time.localtime(t))
+        at = time.strftime("%-I:%M %p", time.localtime(t))
+        detected = prompts.describe_episode(episode) if episode.get("kind") else "a symptom"
         if out.escalated:
-            what = (f"At {at} the wristband detected a possible fall: a drop, a hard impact, then stillness. "
-                    "Steady asked through the headphones twice and got no answer.")
+            checked = "Steady asked through the headphones twice and got no answer."
         else:
-            what = (f"At {at} the wristband detected a possible fall. Steady spoke with them through the "
-                    f"headphones and they said they need help. {out.summary}").strip()
-        log.warning("possible fall, %s: calling the caregiver", "no answer" if out.escalated else "needs help")
+            checked = f"Steady spoke with them through the headphones and they said they need help. {out.summary}".strip()
+        what = f"At {at} the wristband detected {detected}. {checked}"
+        log.warning("%s, %s: calling the caregiver", episode.get("kind", "symptom"), "no answer" if out.escalated else "needs help")
         caller = self.steady.caller
         names = caller.who() if getattr(caller, "ready", False) and hasattr(caller, "who") else []
         if names and out.escalated:               # when they asked for help, the agent has already said so
-            self._say(f"I'm phoning {names[0]} now. Stay where you are.")
+            self._say(f"I'm phoning {names[0]} now.")
         try:
             reached = await caller.alert(what, t, conversation_id=out.id, episode_id=episode.get("id"))
         except Exception:  # noqa: BLE001
             log.exception("caregiver call failed")
             reached = False
         if reached:
-            self._say("Someone is coming to check on you. Stay where you are.")
+            self._say("Someone is coming to check on you.")
         else:
             self._say("I couldn't reach anyone by phone. If you can, please call for help.")
+        await self._report(episode, out, what, reached, getattr(caller, "last_notes", []))
+
+    async def _report(self, episode: dict, out, what: str, reached: bool, call_notes: list[str]) -> None:
+        """After the call: a text and an email to the caregiver saying what happened and how it ended."""
+        tasks = getattr(self.steady, "tasks", None)
+        if tasks is None:
+            return
+        call = ("; ".join(call_notes) if call_notes else ("someone confirmed they will check" if reached
+                                                           else "nobody could be reached by phone"))
+        try:
+            await tasks.create("incident_report", "Send the report of this incident.", to="caregiver", origin="call",
+                               context={"what_happened": what, "phone_call": call, "someone_is_checking": bool(reached),
+                                        "at": time.strftime("%-I:%M %p on %A %-d %B", time.localtime(episode.get("started_at") or time.time()))},
+                               conversation_id=out.id, channels=["imessage", "email"])
+        except Exception as e:  # noqa: BLE001  the report must never break screening
+            log.error("incident report not sent: %s", e)
 
     def _say(self, text: str) -> None:
         """Tell the wearer in the headphones what is happening with the call."""

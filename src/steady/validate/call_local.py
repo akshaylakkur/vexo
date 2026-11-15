@@ -163,7 +163,7 @@ async def main(use_tunnel: bool) -> int:
         if use_tunnel:
             async with httpx.AsyncClient(timeout=10) as http:
                 ok = False
-                for _ in range(10):
+                for _ in range(25):          # a new tunnel's name can take a while to appear in this Mac's DNS
                     try:
                         ok = (await http.get(server.public_url + "/health")).text == "ok"
                     except httpx.HTTPError:

@@ -76,16 +76,17 @@ def outbox(tmp):
 
 # ---- the two paths, and nothing else --------------------------------------------------------
 
-def test_only_two_paths_exist():
+def test_only_three_paths_exist():
     assert tier_for("message_contact", "voice") == 1 and tier_for("email_contact", "voice") == 1
     assert tier_for("daily_brief", "schedule") == 0
-    for task_type, origin in [("daily_brief", "voice"), ("message_contact", "schedule"),
+    assert tier_for("incident_report", "call") == 0
+    for task_type, origin in [("daily_brief", "voice"), ("message_contact", "schedule"), ("incident_report", "voice"),
                               ("caregiver_alert", "voice"), ("general_request", "voice")]:
         with pytest.raises(ValueError):
             tier_for(task_type, origin)
 
 
-def test_there_is_no_emergency_path(env):
+def test_a_model_cannot_raise_an_alert_or_a_report(env):
     cfg, _ = env
 
     async def go():
@@ -94,6 +95,8 @@ def test_there_is_no_emergency_path(env):
             await tm.create("caregiver_alert", "help", to="caregiver")
         with pytest.raises(TaskError):
             await tm.create("daily_brief", "now", to="caregiver", origin="voice")     # a model cannot trigger the brief
+        with pytest.raises(TaskError):
+            await tm.create("incident_report", "now", to="caregiver", origin="voice")  # nor the after-call report
         assert not hasattr(tm, "watch_escalations")
         await writer.close()
 
@@ -190,10 +193,12 @@ def test_email_is_always_from_the_configured_sender(env, monkeypatch):
             return False
 
     monkeypatch.setattr(delivery_mod.smtplib, "SMTP", FakeSMTP)
+    password = {"value": None}                       # not this machine's .env: the test decides
+    monkeypatch.setattr(delivery_mod, "secret", lambda name, required=True: password["value"])
     d = Delivery(cfg, BOOK)
     res = asyncio.run(d.send(PATEL, "email", "Weekly update.", subject="Tremor update\nBcc: x@evil.example"))
     assert not res.ok and "not set up yet" in res.detail                       # no password yet: nothing is sent
-    monkeypatch.setenv("STEADY_SMTP_PASSWORD", "app-pw")
+    password["value"] = "app-pw"
     res = asyncio.run(d.send(PATEL, "email", "Weekly update.", subject="Tremor update\nBcc: x@evil.example"))
     assert res.ok and sent["server"] == ("smtp.example.com", 587) and sent["tls"]
     assert sent["login"] == ("akshay@example.com", "app-pw")
@@ -411,3 +416,33 @@ def test_api_needs_the_token_and_relays_refusals(env):
     assert r_unapproved.status_code == 409 and "not been approved" in r_unapproved.json()["detail"]
     assert r_contacts.status_code == 200 and "+1415" not in r_contacts.text and "@" not in r_contacts.text
     assert r_speak.status_code in (404, 405)                                    # no such endpoint any more
+
+
+def test_after_call_report_goes_by_text_and_email_and_falls_back_to_plain_facts(env):
+    cfg, tmp = env
+    cfg.raw["call"]["report_fallback_s"] = 0.3
+    gw = FakeGateway()
+
+    async def go():
+        tm, _, writer = await make(cfg, gw)
+        watcher = asyncio.create_task(tm.watch())
+        ctx = {"what_happened": "At 5:02 PM the wristband detected a moderate shaking of the hand. Steady asked twice and got no answer.",
+               "phone_call": "Priya confirmed (said yes)", "someone_is_checking": True, "at": "5:02 PM"}
+        t = await tm.create("incident_report", "Send the report.", to="caregiver", origin="call", context=ctx,
+                            channels=["imessage", "email"])
+        assert not t["needs_confirmation"] and t["tier"] == 0
+        await settle()
+        got = await tm.claim(t["id"])                               # what OpenClaw would write from
+        await asyncio.sleep(1.6)                                     # ... but it never writes it
+        watcher.cancel()
+        task = tm.tasks[t["id"]]
+        await writer.close()
+        return got, task
+
+    got, task = run(go())
+    assert "Steady report for Akshay" in got["instructions"] and got["goes_out_as"] == ["a text message", "an email"]
+    assert task.status == "done" and [d["by"] for d in task.deliveries] == ["steady_plain"] * 2
+    sent = outbox(tmp)
+    assert [(o["channel"], o["to"]) for o in sent] == [("imessage", "+14155550123"), ("email", "priya@example.com")]
+    assert sent[0]["text"].startswith("Steady report for Akshay. At 5:02 PM the wristband detected")
+    assert "Phone call: Priya confirmed (said yes)." in sent[0]["text"]

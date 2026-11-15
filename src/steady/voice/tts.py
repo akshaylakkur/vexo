@@ -11,6 +11,7 @@ import contextlib
 import json
 import logging
 import time
+from collections import deque
 from typing import Callable
 from urllib.parse import urlencode
 
@@ -18,6 +19,8 @@ import websockets
 
 log = logging.getLogger("steady.voice")
 URL = "wss://api.deepgram.com/v1/speak"          # the only place the key and the text go
+FLUSH_LIMIT = 20                                  # Deepgram: at most 20 flushes ...
+FLUSH_WINDOW_S = 60.0                             # ... a minute; more are ignored with a warning
 
 
 class TTSError(Exception):
@@ -43,6 +46,9 @@ class DeepgramTTS:
         self.bytes_received = 0
         self.connects = 0
         self._clear_no = 0
+        self._flush_times: deque[float] = deque()   # when the last flushes were sent (the rate limit)
+        self._unflushed = False                     # text sent that no Flush has covered yet
+        self.flush_warnings = 0
 
     @property
     def connected(self) -> bool:
@@ -83,7 +89,15 @@ class DeepgramTTS:
                 elif kind == "Cleared":
                     self._dropping = False          # what follows belongs to speech sent after the Clear
                 elif kind in ("Warning", "Error"):
-                    log.warning("tts: Deepgram sent a %s", kind)      # its text is not repeated here
+                    code = json.loads(msg).get("warn_code") or json.loads(msg).get("err_code") or ""
+                    log.warning("tts: Deepgram sent a %s %s", kind, code)
+                    if code == "EXCESSIVE_FLUSH":          # that Flush was ignored: its text is still waiting
+                        self.flush_warnings += 1
+                        self._sent = max(self._flushed, self._sent - 1)
+                        self._unflushed = True
+                        now = time.monotonic()             # the server says the budget is spent: believe it
+                        while len(self._flush_times) < FLUSH_LIMIT:
+                            self._flush_times.append(now)
                 self._progress.set()
         except websockets.ConnectionClosed:
             pass
@@ -104,18 +118,45 @@ class DeepgramTTS:
                     if attempt == 2:
                         raise TTSError("The connection to Deepgram text-to-speech closed") from None
 
-    async def speak(self, text: str) -> None:
-        """Queue one piece of text; its audio starts arriving at once."""
+    def flush_budget(self) -> int:
+        """How many more flushes Deepgram will take right now."""
+        now = time.monotonic()
+        while self._flush_times and now - self._flush_times[0] >= FLUSH_WINDOW_S:
+            self._flush_times.popleft()
+        return FLUSH_LIMIT - len(self._flush_times)
+
+    async def speak(self, text: str, flush: bool = True) -> None:
+        """Queue one piece of text. With flush, its audio starts arriving at once; without, it
+        is spoken with the next flush (Deepgram keeps it)."""
         text = text.strip()
         if not text:
             return
-        await self._send({"type": "Speak", "text": text}, {"type": "Flush"})
+        await self._send({"type": "Speak", "text": text})
+        self._unflushed = True
+        if flush:
+            await self.flush()
+
+    async def flush(self, wait: bool = False) -> bool:
+        """Ask for the audio of everything queued. Returns False if the rate limit is used up
+        and `wait` is False; with `wait`, waits until a flush is allowed again."""
+        if not self._unflushed:
+            return True
+        while self.flush_budget() <= 0:
+            if not wait:
+                return False
+            await asyncio.sleep(max(0.1, FLUSH_WINDOW_S - (time.monotonic() - self._flush_times[0]) + 0.1))
+        await self._send({"type": "Flush"})
+        self._flush_times.append(time.monotonic())
+        self._unflushed = False
         self._sent += 1                             # after sending: a (re)connect resets the counters
+        return True
 
     async def wait_flushed(self, timeout: float = 30.0) -> bool:
         """Until Deepgram has sent the audio of everything spoken so far."""
         end = time.monotonic() + timeout
-        while self._flushed < self._sent:
+        while self._flushed < self._sent or self._unflushed:
+            if self._unflushed:                     # text still waiting for a flush (held back, or refused)
+                await self.flush(wait=True)
             left = end - time.monotonic()
             if left <= 0:
                 return False
@@ -134,6 +175,7 @@ class DeepgramTTS:
         self._clear_no += 1
         mine = self._clear_no
         self._sent = self._flushed = 0
+        self._unflushed = False
         self._progress.set()
         with contextlib.suppress(TTSError):
             await self._send({"type": "Clear"})

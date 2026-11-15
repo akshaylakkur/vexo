@@ -89,7 +89,7 @@ def test_not_worn_busy_and_out_of_reach():
 
 def test_demo_mode_speaks_sooner_and_for_any_tremor():
     p = PolicyParams.from_config(config_mod.load(overrides={"mode": "demo"}))
-    assert (p.tremor_min_s, p.tremor_min_severity, p.cooldown_s("rest_tremor")) == (20, "notice", 120)
+    assert (p.tremor_min_s, p.tremor_min_severity, p.cooldown_s("rest_tremor")) == (12, "notice", 15)         # a second tremor 15 s later speaks again
     assert PolicyParams.from_config(config_mod.load()).cooldown_s("rest_tremor") == 45 * MIN
     r = Rules(p)
     assert r.decide(tremor(1, 20, severity="notice", grade="mild"), at(10)).speak

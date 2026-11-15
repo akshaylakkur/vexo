@@ -471,7 +471,7 @@ example "AirPods"). If not found, it falls back to the system default and logs a
 | SPEAKING | The agent speaks first, from the situation card ("Hi, it's Steady. I noticed your hand has been shaking for a couple of minutes. How are you feeling?"). For freezing, the first thing played is a 4-beat walking cue ("step... step... step... step"). |
 | LISTENING | Interim text is published on the bus. The turn ends on `speech_final` or `UtteranceEnd`. |
 | THINKING | Stream the Ollama reply; the first sentence goes to TTS as soon as it's complete. |
-| Interruption | While SPEAKING, a `SpeechStarted` followed by ≥ 2 interim words: stop the player, send TTS `Clear`, cancel the LLM stream, go to LISTENING. Headphones prevent the agent hearing itself. If config falls back to speakers, interruptions are off and STT is ignored while speaking. |
+| No interruptions | Steady always finishes what it is saying, then listens. What the person says or taps meanwhile is kept and answered when it has finished. Only a possible fall stops a running conversation. The same holds on a phone call, where words spoken over Steady are dropped. |
 | CHECKING_SILENCE | 12 s without speech after a question: the agent asks once more, simpler ("Can you hear me? Just say yes or no."). Second silence: urgent → ESCALATING; otherwise CLOSING with outcome `no_response`. A **single band tap** counts as "yes, I'm OK" at any time. |
 | ESCALATING | An urgent check-in (a possible fall) with no answer closes as `no_response` and is marked `escalated`; one that ends `needs_help` is treated the same way. Steady then **phones the caregiver**, then the backup caregiver (`steady/call`, Twilio + Pipecat), and tells the wearer in the headphones what is happening. No text message or email is sent. |
 | CLOSING | Agent says goodbye. `configure(audio=False)`; the LED returns to screening green. Conversation row saved with outcome and summary. |
@@ -505,7 +505,7 @@ rule.
 
 | Gesture | In screening | In a conversation |
 |---|---|---|
-| Double-tap | Start a conversation ("Hi, what can I do for you?") | Stop the agent speaking and listen |
+| Double-tap | Start a conversation ("Hi, what can I do for you?") | Ignored |
 | Single tap | — | "Yes / I'm OK / confirm" |
 | Tilt | Ignored | Ignored: wearing the band produces tilts all the time |
 
@@ -539,7 +539,6 @@ re-applies it after reconnects.
 | End of turn → first Ollama sentence | ≤ 900 ms |
 | Sentence → first audio | ≤ 300 ms |
 | **Person stops → agent starts speaking** | **≤ 1.7 s** |
-| Interruption → silence | ≤ 150 ms |
 
 Each turn's timings are stored in `turns.latency_ms` and printed by `steady talk`.
 
@@ -563,6 +562,13 @@ messages always match the database.
 Steady itself phones the caregiver (then the backup) after a fall with no answer or "needs help",
 with Twilio + Pipecat + Deepgram + Ollama, and records a `caregiver_call` task (tier 2). See
 `docs/caregiver-call.md`.
+
+On the call Steady speaks first and cannot be interrupted, then it is a conversation of up to
+three minutes: the caregiver can ask questions before and after agreeing (answered from what
+happened and the band's live status), agrees by saying yes or pressing 1, and ends it with a
+goodbye. Turns are decided by the words (a one-second pause ends a turn), not by sound, and
+background talk that is not meant for Steady is ignored: voice-activity detection failed on
+the first real calls in a noisy room.
 
 ### 7.2 Integration
 
@@ -645,7 +651,10 @@ created ─▶ (tier 1) needs_confirmation ─▶ confirmed ─▶ sent (hook OK
 
 `openclaw/README.md` is the current description. In short:
 
-- **Two outgoing paths only.** (1) The wearer asks out loud for a text message or an email to
+- **After a call, a report.** When a symptom check-in gets no answer twice (a tremor as well as
+  a fall), or the wearer says they need help, Steady phones the caregiver and afterwards sends
+  them a text and an email (`incident_report`) saying what happened and how the call went.
+- **Two outgoing paths the wearer or the schedule start.** (1) The wearer asks out loud for a text message or an email to
   an approved contact, and says yes once. (2) The end-of-day brief to the caregiver, at
   `brief.time`, by text, email or both. Task types: `message_contact`, `email_contact`,
   `daily_brief`. **Messages have no emergency path.** After a possible fall with no answer, or

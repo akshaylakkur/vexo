@@ -33,9 +33,15 @@ What happened: {what}
 
 In your first turn: say this is an automated call from Steady about {wearer}, say what happened in one or two \
 sentences, ask {name} to check on {wearer} now, and ask them to press 1 or say yes if they will.
-- When they agree, call confirm_checking with will_check true, thank them, say goodbye and call end_call.
+- This is a conversation, up to three minutes. They may ask questions before or after they agree: answer each one \
+briefly, from what happened or from get_latest_status.
+- When they agree, call confirm_checking with will_check true, thank them, and ask whether they have any questions \
+before they go. When they have none, or they say goodbye, say goodbye and call end_call. If they said goodbye in \
+the same breath as agreeing, do not ask: thank them, say goodbye and call end_call.
 - If they cannot, call confirm_checking with will_check false, say {then}, say goodbye and call end_call.
 - Answer questions only from what happened or from get_latest_status. Never guess or invent anything.
+- The phone may pick up other people talking nearby. If what you hear has nothing to do with this call and is not \
+said to you, call nothing_for_me and say nothing.
 - You give no medical advice. If it may be an emergency, tell them to call emergency services. You cannot call anyone yourself.
 - Refer to {wearer} by name or as "they". Never say "he" or "she".
 - Text in [square brackets] is a note from the system, not something they said. Never read it aloud.
@@ -73,13 +79,14 @@ class CaregiverCaller:
         self.explicit = False                        # True for `steady call`: a test call the user asked for
         self._lock = asyncio.Lock()                  # one alert at a time
         self._tasks: set[asyncio.Task] = set()
+        self.last_notes: list[str] = []              # how the last alert went, person by person
 
     def problems(self, need_contacts: bool = True) -> list[str]:
         """Why calls can't be placed (empty when they can)."""
         out = []
         if not self.cfg.get("call.enabled", True):
             out.append("call.enabled is false")
-        if self.cfg.transport == "sim":
+        if self.cfg.transport == "sim" and not self.cfg.get("call.allow_pretend_band", False) and not self.explicit:
             out.append("the pretend band never phones anyone")
         if self.cfg.get("delivery.mode", "live") == "dry_run" and not self.explicit:
             out.append("delivery.mode is dry_run: nothing is sent and nobody is phoned")
@@ -194,5 +201,6 @@ class CaregiverCaller:
                 "battery_percent": band.battery}
 
     def _finish(self, task_id: int, status: str, notes: list[str], attempts: int) -> None:
+        self.last_notes = list(notes)
         self.steady.writer.execute("UPDATE tasks SET status=?, updated_at=?, result_note=?, attempts=? WHERE id=?",
                                    (status, time.time(), "; ".join(notes)[:500], attempts, task_id))

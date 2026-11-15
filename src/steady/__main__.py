@@ -42,6 +42,7 @@ def main(argv: list[str] | None = None) -> int:
 
     p_call = sub.add_parser("call", help="place a test call to the caregiver (Twilio + Pipecat + Deepgram)")
     p_call.add_argument("--to", default="caregiver", help="caregiver, backup_caregiver, or a number like +15551234567")
+    p_call.add_argument("--fall", action="store_true", help="rehearse the real call after a fall, instead of the 'only a test' call")
 
     p_val = sub.add_parser("validate", help="run the labelled validation protocol and score the detectors")
     p_val.add_argument("--live", action="store_true", help="on the real band, performed by the wearer")
@@ -147,7 +148,7 @@ def main(argv: list[str] | None = None) -> int:
         return asyncio.run(runner.run(vcfg, live=live, only=args.only.split(",") if args.only else None))
     if args.cmd == "call":
         from .call import cli as call_cli
-        return asyncio.run(call_cli.test_call(cfg, args.to))
+        return asyncio.run(call_cli.test_call(cfg, args.to, fall=args.fall))
     if args.cmd == "init-db":
         db.init(cfg.db_path)
         print(f"database ready: {cfg.db_path}")
