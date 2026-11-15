@@ -1,13 +1,19 @@
 # Steady + OpenClaw (milestone M6)
 
-Steady sends messages in exactly two situations:
+Steady sends messages in exactly three situations:
 
 1. **The wearer asks out loud** for a text message or an email to one of their approved
    contacts. Steady asks once for a yes (voice, or one tap on the band) before anything goes.
 2. **The end-of-day brief:** once a day, the day's tracked data goes to the caregiver as a
    text message, an email, or both.
 
-There is no emergency or alert path here. That is reserved for separate work.
+3. **After Steady has phoned the caregiver** (a symptom check-in nobody answered, or the wearer
+   said they need help): a text and an email to that caregiver saying what happened and how the
+   call went.
+
+Messages are never the alert itself. After a possible fall with no answer, or when the wearer says
+they need help, Steady **phones** the caregiver instead: see `docs/caregiver-call.md` and
+`docs/go-live.md`.
 
 OpenClaw's agent writes the words. Steady decides who receives them and delivers them.
 

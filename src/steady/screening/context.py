@@ -17,6 +17,8 @@ class ContextParams:
     not_worn_acc_dyn_rms_g: float = 0.003
     not_worn_after_s: float = 600.0
     activity_max_age_s: float = 3.0
+    tremor_min_hz: float = 3.5        # arm swing and steps are slower than this
+    rest_vol_share: float = 0.2       # share of movement power in 0.5-3 Hz below which the arm counts as resting
 
 
 @dataclass
@@ -46,9 +48,15 @@ class ContextClassifier:
         else:
             self._still_since = None
 
+        # One fast rhythm carries the movement (found on the real band: the band's step counter
+        # counts a shaking hand as steps, and a strong tremor leaks into the slow band).
+        fast_rhythm = f.dom_freq >= p.tremor_min_hz and max(f.rest_ratio, f.action_ratio) >= 0.5
         fresh = activity is not None and (t_end - activity.time) <= p.activity_max_age_s
-        if fresh and activity.state in ("walk", "run") and activity.cadence > p.walking_min_cadence:
+        if fresh and activity.state in ("walk", "run") and activity.cadence > p.walking_min_cadence \
+                and not fast_rhythm:
             return "walking"
         if f.vol_rms < p.rest_vol_rms_dps:
             return "rest"
+        if fast_rhythm and f.vol_rms ** 2 <= p.rest_vol_share * max(f.total_rms ** 2, 1e-9):
+            return "rest"                 # the arm itself is not being moved about: only the tremor
         return "active"

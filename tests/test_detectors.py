@@ -49,11 +49,39 @@ def test_fast_postural_tremor_is_action_tremor():
     ("too weak", sine(5.0, 2.0)),
     ("broad-band jitter", white(8.0)),
     ("vibration", sine(20.0, 20)),
-    ("violent scrubbing", sine(4.5, 260)),
+    ("violent thrashing", sine(4.5, 500)),
 ])
 def test_look_alikes_are_not_tremor(name, gyro):
     flag, _, f = detect(rows(7, gyro=gyro))
     assert flag == 0, (name, f)
+
+
+def test_a_strongly_shaken_hand_is_a_tremor_even_if_the_band_counts_steps():
+    """What the real band showed: 170 deg/s at 4-6 Hz, and its step counter says 'walk'."""
+    from steady.screening.context import Activity
+    data = rows(7, gyro=sine(4.2, 240))                         # 170 deg/s RMS
+    w = build_window(data, data[-1, 0], 4.0, 2.0)
+    f, _ = compute(w)
+    walk = Activity(time=data[-1, 0], state="walk", cadence=126, steps=10)
+    ctx = ContextClassifier(ContextParams()).classify(f, data[-1, 0], walk)
+    assert ctx == "rest" and TremorDetector()(f, ctx) == F.REST_TREMOR
+
+
+def test_real_walking_is_still_walking_and_a_tremor_in_it_is_not_judged():
+    from steady.screening.context import Activity
+    swing = lambda t: sine(0.9, 100)(t) + sine(4.8, 20, axis=1)(t)   # noqa: E731  arm swing with a tremor on top
+    data = rows(7, gyro=swing)
+    w = build_window(data, data[-1, 0], 4.0, 2.0)
+    f, _ = compute(w)
+    walk = Activity(time=data[-1, 0], state="walk", cadence=108, steps=10)
+    ctx = ContextClassifier(ContextParams()).classify(f, data[-1, 0], walk)
+    assert ctx == "walking" and TremorDetector()(f, ctx) == 0
+
+
+def test_gesturing_with_a_small_fast_component_stays_active():
+    wave = lambda t: sine(1.0, 120)(t) + sine(5.0, 15, axis=1)(t)    # noqa: E731
+    flag, ctx, _ = detect(rows(7, gyro=wave))
+    assert ctx == "active" and flag == 0
 
 
 def test_no_tremor_judgement_while_walking():

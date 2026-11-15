@@ -29,8 +29,9 @@ class TremorParams:
     min_amp_dps: float = 4.0        # absolute floor, deg/s RMS in 3.5-12 Hz
     noise_factor: float = 3.0       # ... or this many times the calibrated noise floor
     noise_floor_dps: float | None = None
-    max_amp_dps: float = 150.0      # beyond this it is a deliberate, vigorous action
-    max_acc_dyn_g: float = 0.35     # likewise: the whole forearm is being thrown about
+    max_amp_dps: float = 300.0      # beyond this it is a deliberate, violent action
+    max_acc_dyn_g: float = 1.5      # likewise. (150 deg/s and 0.35 g until a real wrist showed a
+                                    # shaken hand reaches 170 deg/s and 1.2 g.)
     mild_below_dps: float = 10.0
     marked_above_dps: float = 30.0
 

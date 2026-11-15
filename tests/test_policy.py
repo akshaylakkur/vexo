@@ -89,7 +89,7 @@ def test_not_worn_busy_and_out_of_reach():
 
 def test_demo_mode_speaks_sooner_and_for_any_tremor():
     p = PolicyParams.from_config(config_mod.load(overrides={"mode": "demo"}))
-    assert (p.tremor_min_s, p.tremor_min_severity, p.cooldown_s("rest_tremor")) == (20, "notice", 120)
+    assert (p.tremor_min_s, p.tremor_min_severity, p.cooldown_s("rest_tremor")) == (12, "notice", 15)         # a second tremor 15 s later speaks again
     assert PolicyParams.from_config(config_mod.load()).cooldown_s("rest_tremor") == 45 * MIN
     r = Rules(p)
     assert r.decide(tremor(1, 20, severity="notice", grade="mild"), at(10)).speak
@@ -234,3 +234,42 @@ def test_tremor_and_fall_open_the_right_conversations_on_pretend_band(tmp_path):
     assert all(r["conversation_id"] == r["id"] for r in rows)                   # episodes link to their check-in
     assert s.voice.llm.seen[1][-1]["content"].startswith(prompts.OPEN_URGENT)
     assert prompts.PREEMPTING in s.voice.llm.seen[1][-1]["content"]
+
+
+# ---- double-taps on a real wrist (a shaking hand taps the band by itself) -------------------
+
+def _engine_for_taps(last, current):
+    from types import SimpleNamespace as NS
+
+    from steady.policy.engine import PolicyEngine
+    opened = []
+    steady = NS(cfg=NS(get=lambda k, d=None: d), band=NS(status=NS(connected=True)),
+                voice=NS(busy=False, running=None, current=None),
+                screener=NS(last=last, episodes=NS(current=lambda: current)))
+    eng = PolicyEngine(steady)
+    eng._open = lambda **kw: opened.append(kw)
+    return eng, opened
+
+
+def test_double_tap_on_a_calm_wrist_opens_a_general_conversation():
+    eng, opened = _engine_for_taps({"valid": 1, "flags": 0, "acc_dyn_rms": 0.03, "tremor_amp": 1.0}, [])
+    assert eng.on_double_tap() == "double_tap" and opened == [{"trigger": "double_tap"}]
+
+
+def test_double_tap_from_a_shaking_wrist_is_ignored():
+    eng, opened = _engine_for_taps({"valid": 1, "flags": 0, "acc_dyn_rms": 0.9, "tremor_amp": 120.0}, [])
+    assert eng.on_double_tap() == "ignored" and opened == []
+
+
+def test_double_tap_right_after_a_tremor_opens_a_check_in_about_the_tremor_once():
+    ep = {"id": 4, "kind": "rest_tremor", "severity": "concern", "duration_s": 22.0, "started_at": 1.0,
+          "metrics": {"grade": "moderate"}}
+    shaking = {"valid": 1, "flags": 1, "acc_dyn_rms": 0.6, "tremor_amp": 60.0}
+    eng, opened = _engine_for_taps(shaking, [ep])
+    assert eng.on_double_tap() == "ignored" and opened == []          # the shaking itself tapped: the rules decide
+    eng.steady.screener.last = {"valid": 1, "flags": 0, "acc_dyn_rms": 0.04, "tremor_amp": 3.0}   # it just stopped
+    assert eng.on_double_tap() == "episode"
+    assert opened == [{"trigger": "episode", "episode": ep}]
+    later = dict(ep, duration_s=75.0)                    # the same tremor reaches 60 s: no second check-in
+    d = eng.consider(later, now=1_800_000_000.0)
+    assert not d.speak and len(opened) == 1

@@ -47,8 +47,6 @@ def phases() -> list[Phase]:
               live="Walk around with your arms swinging normally."),
         Phase("pd_intermittent", "Rest tremor that comes and goes (5 Hz, 18 deg/s, 11 s on / 4 s off)", "rest_tremor",
               S.tremor(5.0, 18, envelope=S.on_off(11, 4)), seconds=28.0),
-        Phase("brushing", "Brushing teeth (4.5 Hz, vigorous)", None, S.brushing_teeth(),
-              live="Mime brushing your teeth hard and fast."),
         Phase("postural_fast", "Fast postural tremor, essential-tremor range (8.5 Hz, 15 deg/s)", "action_tremor",
               S.tremor(8.5, 15)),
         Phase("stirring", "Stirring a pot (2.5 Hz)", None, S.stirring(),
@@ -67,6 +65,10 @@ def phases() -> list[Phase]:
         # ---- known limits of a single wrist sensor (reported, not scored) ---------------
         Phase("limit_walk_tremor", "Rest tremor while walking", None, S.walking(tremor_rms=20), activity="walk",
               limit=True, note="by design: tremor is not judged while walking, so this is missed"),
+        Phase("brushing", "Brushing teeth (4.5 Hz, vigorous)", "rest_tremor", S.brushing_teeth(), limit=True,
+              live="Mime brushing your teeth hard and fast.",
+              note="a false alarm we expect since the real-wrist tuning: a shaken hand reaches the same "
+                   "strength, so strength no longer tells them apart; the check-in is what resolves it"),
         Phase("limit_gentle_rhythm", "A gentle voluntary 5 Hz rhythm (whisking, 30 deg/s)", "rest_tremor",
               S.tremor(5.0, 30, wax=0.05), limit=True,
               note="a false alarm we expect: at the wrist it is indistinguishable from a tremor"),

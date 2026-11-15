@@ -1,5 +1,6 @@
 import asyncio
 import json
+import time
 
 import websockets
 
@@ -73,6 +74,7 @@ class MockDeepgram:
         self.received, self.headers, self.paths = [], [], []
         self.chunk_delay = chunk_delay
         self.closed_first = False
+        self.flushes = []
 
     async def handler(self, ws):
         self.headers.append(ws.request.headers.get("Authorization"))
@@ -93,6 +95,12 @@ class MockDeepgram:
             if msg["type"] == "Speak":
                 pending += msg["text"]
             elif msg["type"] == "Flush":
+                now = time.monotonic()
+                self.flushes = [t for t in self.flushes if now - t < 60] + [now]
+                if len(self.flushes) > 20:                   # the real service ignores it and warns
+                    self.flushes.pop()
+                    await ws.send(json.dumps({"type": "Warning", "warn_code": "EXCESSIVE_FLUSH"}))
+                    continue
                 job, pending, seq = asyncio.create_task(stream(pending, seq, job)), "", seq + 1
             elif msg["type"] == "Clear":
                 if job:
@@ -223,3 +231,54 @@ def test_interruption_stops_sound_and_drops_the_rest():
     assert res.interrupted and left == 0
     assert "Clear" in [m["type"] for m in dg.received]
     assert res2.pieces == 1 and not res2.interrupted and abs(res2.audio_s - len("Okay.") * 0.02) < 0.01
+
+
+def test_a_long_reply_stays_within_deepgrams_flush_limit_and_loses_nothing():
+    """Deepgram takes 20 flushes a minute and ignores the rest; a stall here cost 30 s live."""
+    sentences = [f"This is sentence number {i}." for i in range(45)]
+
+    async def tokens():
+        for sent in sentences:
+            yield sent + " "
+
+    async def go():
+        async with MockDeepgram(chunk_delay=0) as dg:
+            player = FakePlayer()
+            sp = Speaker(DeepgramTTS("k", player.write, url=dg.url), player)
+            sp._noticed = True
+            await sp.start()
+            t0 = time.monotonic()
+            res = await sp.say_stream(tokens())
+            took = time.monotonic() - t0
+            warnings = sp.tts.flush_warnings
+            await sp.close()
+            return dg, res, took, warnings
+
+    dg, res, took, warnings = run(go())
+    kinds = [m["type"] for m in dg.received]
+    assert kinds.count("Speak") == 45 and kinds.count("Flush") <= 20 and warnings == 0
+    assert abs(res.audio_s - sum(len(x) for x in sentences) * 0.02) < 0.01      # every sentence was spoken
+    assert took < 5 and kinds[1] == "Flush"                                      # no stall; the first piece starts at once
+
+
+def test_a_refused_flush_is_retried_instead_of_waiting_for_audio_that_never_comes(monkeypatch):
+    from steady.voice import tts as tts_mod
+    monkeypatch.setattr(tts_mod, "FLUSH_WINDOW_S", 0.4)          # the client's view of the window, shortened
+
+    async def go():
+        async with MockDeepgram(chunk_delay=0) as dg:
+            dg.flushes = [time.monotonic()] * 20                  # the server's budget is already spent
+            audio = bytearray()
+            t = DeepgramTTS("k", audio.extend, url=dg.url)
+            await t.speak("Held back.")
+            dg_flushes_after = None
+            await asyncio.sleep(0.1)
+            dg.flushes = []                                       # ... and frees up
+            t0 = time.monotonic()
+            ok = await t.wait_flushed(5)
+            took = time.monotonic() - t0
+            await t.close()
+            return ok, took, len(audio), t.flush_warnings
+
+    ok, took, n, warnings = run(go())
+    assert ok and warnings == 1 and n == len("Held back.") * 960 and took < 2

@@ -1,4 +1,5 @@
 import asyncio
+import logging
 import base64
 import sqlite3
 import time
@@ -105,37 +106,72 @@ class FakeService(bot.FrameProcessor):
 
 
 def test_twilio_media_stream_runs_the_pipecat_call_and_pressing_1_confirms(monkeypatch):
-    """The real Pipecat pipeline over a pretend Twilio media stream (speech and model faked)."""
+    """The real Pipecat pipeline over a pretend Twilio media stream (speech and model faked),
+    on a real web server with a real websocket, so the hang-up is what Twilio's would be."""
+    import json
+    import socket
+
+    import uvicorn
+    import websockets
     from pipecat.serializers.twilio import TwilioFrameSerializer
 
     model_saw = []
-    hangups = []
 
     async def no_hangup(self):
-        hangups.append(True)
+        pass
 
     monkeypatch.setattr(bot, "services", lambda cfg, s: (FakeService(), FakeService(model_saw), FakeService()))
     monkeypatch.setattr(TwilioFrameSerializer, "_hang_up_call", no_hangup)
     s = session()
-    client = TestClient(server_with(s).app())
-    silence = base64.b64encode(b"\xff" * 160).decode()           # 20 ms of mu-law silence
-    with client.websocket_connect("/ws") as ws:
-        ws.send_json({"event": "connected", "protocol": "Call", "version": "1.0.0"})
-        ws.send_json({"event": "start", "streamSid": "MZ1", "start": {
+    with socket.socket() as sock:
+        sock.bind(("127.0.0.1", 0))
+        port = sock.getsockname()[1]
+    errors = []
+
+    class Catch(logging.Handler):
+        def emit(self, record):
+            if record.levelno >= logging.ERROR:
+                errors.append(record.getMessage())
+
+    async def go():
+        server = uvicorn.Server(uvicorn.Config(server_with(s).app(), host="127.0.0.1", port=port,
+                                               log_level="error", lifespan="off"))
+        server.install_signal_handlers = lambda: None
+        serving = asyncio.create_task(server.serve())
+        while not server.started:
+            await asyncio.sleep(0.02)
+        silence = base64.b64encode(b"\xff" * 160).decode()           # 20 ms of mu-law silence
+        ws = await websockets.connect(f"ws://127.0.0.1:{port}/ws")
+        send = lambda msg: ws.send(json.dumps(msg))                   # noqa: E731
+        await send({"event": "connected", "protocol": "Call", "version": "1.0.0"})
+        await send({"event": "start", "streamSid": "MZ1", "start": {
             "streamSid": "MZ1", "callSid": "CA1", "accountSid": CREDS.account_sid,
             "customParameters": {"token": "tok"}, "mediaFormat": {"encoding": "audio/x-mulaw", "sampleRate": 8000}}})
-        for i in range(10):
-            ws.send_json({"event": "media", "streamSid": "MZ1", "media": {"payload": silence, "track": "inbound"}})
+        for _ in range(10):
+            await send({"event": "media", "streamSid": "MZ1", "media": {"payload": silence, "track": "inbound"}})
         deadline = time.time() + 10
         while not model_saw and time.time() < deadline:
-            time.sleep(0.05)
-        ws.send_json({"event": "dtmf", "streamSid": "MZ1", "dtmf": {"track": "inbound_track", "digit": "1"}})
+            await asyncio.sleep(0.05)
+        await send({"event": "dtmf", "streamSid": "MZ1", "dtmf": {"track": "inbound_track", "digit": "1"}})
         while len(model_saw) < 2 and time.time() < deadline:
-            time.sleep(0.05)
-        ws.send_json({"event": "stop", "streamSid": "MZ1"})
+            await asyncio.sleep(0.05)
+        await send({"event": "stop", "streamSid": "MZ1"})
+        await ws.close()                                              # the caregiver hangs up
+        await asyncio.wait_for(s.finished.wait(), 8)                  # ... and the call ends by itself
+        await asyncio.sleep(0.2)
+        server.should_exit = True
+        await serving
+
+    catch = Catch()
+    logging.getLogger().addHandler(catch)
+    try:
+        asyncio.run(asyncio.wait_for(go(), 30))
+    finally:
+        logging.getLogger().removeHandler(catch)
     assert model_saw[0] == bot.OPENING                                 # Steady spoke first
     assert s.acknowledged.is_set() and s.how == "pressed 1"
     assert model_saw[1] == bot.PRESSED_ONE.format(wearer="Margaret")   # and is told to thank and say goodbye
+    assert s.finished.is_set() and errors == []                        # a hang-up is a clean end, not an error
 
 
 def test_a_stream_without_a_known_token_is_closed():
@@ -239,8 +275,8 @@ def test_latest_status_tells_the_caregiver_what_the_band_sees_now():
 
 # ---- when it happens -----------------------------------------------------------------------
 
-def test_a_fall_with_no_answer_or_a_call_for_help_phones_the_caregiver():
-    alerts = []
+def test_a_symptom_nobody_answers_or_a_call_for_help_phones_the_caregiver_then_reports():
+    alerts, reports = [], []
 
     class Voice:
         running = None
@@ -254,22 +290,86 @@ def test_a_fall_with_no_answer_or_a_call_for_help_phones_the_caregiver():
 
     async def alert(what, t, **kw):
         alerts.append((what, kw))
+        return len(alerts) == 1                                   # the first call is confirmed, the others are not
+
+    async def create(task_type, request, **kw):
+        reports.append((task_type, kw))
 
     def engine_for(out):
         steady = SimpleNamespace(cfg=config_mod.load(), voice=Voice(out), writer=SimpleNamespace(execute=lambda *a: None),
-                                 caller=SimpleNamespace(alert=alert))
+                                 caller=SimpleNamespace(alert=alert, last_notes=["Priya confirmed (said yes)"]),
+                                 tasks=SimpleNamespace(create=create))
         return PolicyEngine(steady)
 
-    fall = {"id": 3, "kind": "fall_suspected", "started_at": time.time()}
+    now = time.time()
+    fall = {"id": 3, "kind": "fall_suspected", "started_at": now}
+    tremor = {"id": 4, "kind": "rest_tremor", "started_at": now, "duration_s": 25, "metrics": {"grade": "moderate", "freq_mean_hz": 5.0}}
     outcome = lambda **kw: SimpleNamespace(**{"id": 5, "summary": "", "escalated": False, **kw})  # noqa: E731
 
     async def go():
         await engine_for(outcome(outcome="no_response", escalated=True))._converse("episode", fall, True, [])
         await engine_for(outcome(outcome="needs_help", summary="She cannot get up."))._converse("episode", fall, True, [])
-        await engine_for(outcome(outcome="ok"))._converse("episode", fall, True, [])                  # she is fine
-        await engine_for(outcome(outcome="needs_help"))._converse("episode", {"id": 4}, False, [])    # not a fall
+        await engine_for(outcome(outcome="no_response", escalated=True))._converse("episode", tremor, False, [])   # a tremor nobody answers
+        await engine_for(outcome(outcome="ok"))._converse("episode", fall, True, [])                  # she is fine: no call
+        await engine_for(outcome(outcome="ok"))._converse("episode", tremor, False, [])               # fine: no call
+        await engine_for(outcome(outcome="no_response"))._converse("double_tap", None, False, [])     # not a symptom: no call
 
     asyncio.run(go())
-    assert len(alerts) == 2
-    assert "got no answer" in alerts[0][0] and alerts[0][1] == {"conversation_id": 5, "episode_id": 3}
+    assert len(alerts) == 3
+    assert "a possible fall" in alerts[0][0] and "got no answer" in alerts[0][0]
+    assert alerts[0][1] == {"conversation_id": 5, "episode_id": 3}
     assert "they said they need help. She cannot get up." in alerts[1][0]
+    assert "shaking of the hand while the arm was resting" in alerts[2][0] and "got no answer" in alerts[2][0]
+    # after every call, a text and an email to the caregiver saying what happened and how the call went
+    assert [r[0] for r in reports] == ["incident_report"] * 3
+    kw = reports[0][1]
+    assert kw["to"] == "caregiver" and kw["origin"] == "call" and kw["channels"] == ["imessage", "email"]
+    assert kw["context"]["someone_is_checking"] is True and kw["context"]["phone_call"] == "Priya confirmed (said yes)"
+    assert reports[2][1]["context"]["someone_is_checking"] is False
+
+
+def test_dry_run_mode_places_no_call_unless_you_ask_for_a_test_call(tmp_path, monkeypatch):
+    monkeypatch.setattr(caller_mod, "CONTACTS", tmp_path / "none.yaml")
+    steady = SimpleNamespace(cfg=config_mod.load(overrides={"delivery.mode": "dry_run"}))
+    c = CaregiverCaller(steady)
+    assert any("dry_run" in p for p in c.problems())
+    c.explicit = True                                    # `steady call`: an explicit test call
+    assert not any("dry_run" in p for p in c.problems())
+
+
+def test_the_wearer_is_told_about_the_call_and_can_ask_for_it(tmp_path, monkeypatch):
+    from steady.agent import prompts
+    said, opened = [], []
+
+    class Voice:
+        running = None
+        busy = False
+
+        async def converse(self, **kw):
+            opened.append(kw)
+            return SimpleNamespace(id=5, summary="", escalated=True, outcome="no_response")
+
+    outcomes = [True, False]
+
+    async def alert(what, t, **kw):
+        return outcomes.pop(0)
+
+    caller = SimpleNamespace(alert=alert, ready=True, who=lambda: ["Priya", "Sam"])
+    steady = SimpleNamespace(cfg=config_mod.load(), voice=Voice(), writer=SimpleNamespace(execute=lambda *a: None),
+                             caller=caller, announcer=SimpleNamespace(queue=said.append))
+    fall = {"id": 3, "kind": "fall_suspected", "started_at": time.time()}
+
+    async def go():
+        eng = PolicyEngine(steady)
+        eng._open(trigger="episode", episode=fall, urgent=True)
+        await asyncio.gather(*eng._tasks)
+        eng._open(trigger="episode", episode=fall, urgent=True)
+        await asyncio.gather(*eng._tasks)
+        eng._open(trigger="double_tap")                                    # not a symptom: no call note
+        await asyncio.gather(*eng._tasks)
+
+    asyncio.run(go())
+    assert opened[0]["notes"] == [prompts.CALL_IF_HELP.format(name="Priya")]      # "I need help" will phone Priya
+    assert opened[2]["notes"] == []
+    assert said == ["I'm phoning Priya now.", "Someone is coming to check on you.",
+                    "I'm phoning Priya now.", "I couldn't reach anyone by phone. If you can, please call for help."]

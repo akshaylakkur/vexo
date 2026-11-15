@@ -81,7 +81,13 @@ class Speaker:
             if t_first_send is None:
                 t_first_send = time.perf_counter()
                 res.first_piece_ms = (t_first_send - t0) * 1000
-            await self.tts.speak(piece)
+            if not any(ch.isalnum() for ch in piece):
+                return                                   # nothing speakable (a stray dash or dot)
+            # Deepgram takes 20 flushes a minute. The first piece of a reply is flushed so the
+            # voice starts at once; later pieces only while there is plenty of budget left, and
+            # the end of the reply always gets one (wait_flushed).
+            budget = self.tts.flush_budget()
+            await self.tts.speak(piece, flush=budget > (4 if res.pieces == 0 else 10))
             res.pieces += 1
             res.text += (" " if res.text else "") + piece
 

@@ -77,6 +77,13 @@ class Rules:
             return "concern" if strong and (ep.get("duration_s") or 0) >= self.p.tremor_min_s else "notice"
         return ep.get("severity") or "info"
 
+    def mark_decided(self, ep: dict, now: float) -> None:
+        """A check-in for this episode was opened another way (a double-tap during it): count it
+        as this episode's check-in, so the rules do not open a second one."""
+        if ep.get("id") is not None:
+            self._decided.add(ep["id"])
+        self._last[ep.get("kind", "")] = (now, RANK.get(self.severity(ep), 1))
+
     def decide(self, ep: dict, now: float, *, connected: bool = True, worn: bool = True,
                busy: str | None = None) -> Decision:
         """busy: None, or the urgency ("normal" / "urgent") of the conversation already running."""

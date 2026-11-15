@@ -205,8 +205,8 @@ false alarms (brushing teeth is not a tremor).
 | Context | Rule (evaluated in this order) |
 |---|---|
 | `not_worn` | `gyro_rms < 0.5 °/s` **and** `acc_dyn_rms < 3 mg`, sustained for **10 min** (a worn wrist always moves a little). Ends at the first window above those values. |
-| `walking` | Band activity state is walk or run **and** cadence > 60 steps/min |
-| `rest` | `vol_power` below `rest_threshold` (calibrated: personal resting baseline p90 × 1.5) |
+| `walking` | Band activity state is walk or run **and** cadence > 60 steps/min **and** the movement is not carried by one fast rhythm (≥ 3.5 Hz). The band's step counter counts a shaking hand as steps. |
+| `rest` | `vol_power` below `rest_threshold` (calibrated: personal resting baseline p90 × 1.5), **or** one fast rhythm carries the movement and the slow band (0.5–3 Hz) holds under 20% of its power |
 | `active` | Everything else |
 
 ### 4.6 Detectors
@@ -221,8 +221,10 @@ A window is positive when **all five** hold (as built in M2):
    peak) and `peak_prom` ≥ **5**. `peak_conc` was added because sensor noise alone often
    scores high on `peak_prom`.
 3. **Strong enough:** `tremor_amp` ≥ **4 °/s**, or 3 × the calibrated noise floor if larger
-4. **Not a vigorous action:** `tremor_amp` ≤ **150 °/s** and `acc_dyn_rms` ≤ **0.35 g**
-   (brushing teeth is in the right frequency range but far too violent)
+4. **Not a violent action:** `tremor_amp` ≤ **300 °/s** and `acc_dyn_rms` ≤ **1.5 g**. These
+   were 150 °/s and 0.35 g until the first run on a real wrist: a hand shaken on purpose
+   reached 170 °/s and 1.2 g. The cost is that vigorous brushing of teeth is now flagged; the
+   check-in is what resolves it.
 5. **Context:** the arm is at rest (never judged while walking)
 
 Severity by `tremor_amp` (provisional; tuned on band 03): **mild** < 10 °/s, **moderate**
@@ -441,7 +443,8 @@ example "AirPods"). If not found, it falls back to the system default and logs a
   what they say, and end when they're OK.
 - Hard rules: never diagnose; never suggest changing, adding or skipping medication ("that's
   one for your doctor"); for danger words ("I can't get up", "chest pain", "help"), tell the
-  person to call emergency services or someone nearby. Steady itself alerts nobody (see 7.5a).
+  person to call emergency services or someone nearby. After a possible fall, if Steady can
+  phone the caregiver, it says so and ends the conversation as `needs_help`, which places the call.
 - Every action outside the conversation goes through a tool. The model never writes code or
   free-form commands.
 - First conversation each day starts with: "Just so you know, I'm listening through your band
@@ -468,9 +471,9 @@ example "AirPods"). If not found, it falls back to the system default and logs a
 | SPEAKING | The agent speaks first, from the situation card ("Hi, it's Steady. I noticed your hand has been shaking for a couple of minutes. How are you feeling?"). For freezing, the first thing played is a 4-beat walking cue ("step... step... step... step"). |
 | LISTENING | Interim text is published on the bus. The turn ends on `speech_final` or `UtteranceEnd`. |
 | THINKING | Stream the Ollama reply; the first sentence goes to TTS as soon as it's complete. |
-| Interruption | While SPEAKING, a `SpeechStarted` followed by ≥ 2 interim words: stop the player, send TTS `Clear`, cancel the LLM stream, go to LISTENING. Headphones prevent the agent hearing itself. If config falls back to speakers, interruptions are off and STT is ignored while speaking. |
+| No interruptions | Steady always finishes what it is saying, then listens. What the person says or taps meanwhile is kept and answered when it has finished. Only a possible fall stops a running conversation. The same holds on a phone call, where words spoken over Steady are dropped. |
 | CHECKING_SILENCE | 12 s without speech after a question: the agent asks once more, simpler ("Can you hear me? Just say yes or no."). Second silence: urgent → ESCALATING; otherwise CLOSING with outcome `no_response`. A **single band tap** counts as "yes, I'm OK" at any time. |
-| ESCALATING | **Not built.** An urgent check-in with no answer closes as `no_response` and is marked `escalated` in the database; nothing is sent. The alert path is reserved for separate work (see 7.5a). |
+| ESCALATING | An urgent check-in (a possible fall) with no answer closes as `no_response` and is marked `escalated`; one that ends `needs_help` is treated the same way. Steady then **phones the caregiver**, then the backup caregiver (`steady/call`, Twilio + Pipecat), and tells the wearer in the headphones what is happening. No text message or email is sent. |
 | CLOSING | Agent says goodbye. `configure(audio=False)`; the LED returns to screening green. Conversation row saved with outcome and summary. |
 
 **Limits:** a conversation lasts at most 10 min (it then wraps up politely). The motion stream
@@ -486,7 +489,7 @@ detected.
 | `log_entry` | `kind`: `medication` / `symptom` / `note`, `details` (object: e.g. `{name, dose, taken_at}`) | Row in `logs` |
 | `record_wellbeing` | `feeling`: `ok` / `unsure` / `not_ok`, `notes` | Updates the conversation; feeds the outcome |
 | `request_task` | `type` (§7.3), `details`, `urgency`: `normal` / `urgent` | Creates an OpenClaw task. Returns `needs_confirmation` with a prompt for tier-1 tasks (§7.4) |
-| `confirm_task` | `task_id`, `confirmed` | Confirms or cancels a pending task. A single tap = confirm, a tilt = cancel |
+| `confirm_task` | `task_id`, `confirmed` | Confirms or cancels a pending task. A single tap = confirm; "no" is said out loud |
 | `end_conversation` | `outcome`: `ok` / `follow_up` / `needs_help` / `no_response`, `summary` | Closes the conversation |
 
 **As built in M4:** `get_status`, `get_summary`, `log_entry`, `record_wellbeing` and
@@ -502,9 +505,16 @@ rule.
 
 | Gesture | In screening | In a conversation |
 |---|---|---|
-| Double-tap | Start a conversation ("Hi, what can I do for you?") | Stop the agent speaking and listen |
+| Double-tap | Start a conversation ("Hi, what can I do for you?") | Ignored |
 | Single tap | — | "Yes / I'm OK / confirm" |
-| Tilt (held 2 s) | — | "No / cancel" |
+| Tilt | Ignored | Ignored: wearing the band produces tilts all the time |
+
+**Found on the real band:** a shaking hand makes the band report taps and double-taps by
+itself. So a tap or a double-tap only counts while the wrist is calm (`screening/gestures.py`).
+While it shakes, taps are ignored and the tremor rules decide. A double-tap on a calm wrist
+while a symptom episode is still open starts a check-in about that symptom, and a symptom
+detected during a conversation is mentioned at the next pause instead of waiting for the
+next conversation.
 
 ### 6.7 LED states
 
@@ -529,7 +539,6 @@ re-applies it after reconnects.
 | End of turn → first Ollama sentence | ≤ 900 ms |
 | Sentence → first audio | ≤ 300 ms |
 | **Person stops → agent starts speaking** | **≤ 1.7 s** |
-| Interruption → silence | ≤ 150 ms |
 
 Each turn's timings are stored in `turns.latency_ms` and printed by `steady talk`.
 
@@ -549,10 +558,17 @@ Each turn's timings are stored in `turns.latency_ms` and printed by `steady talk
 OpenClaw never computes symptom metrics itself. It asks Steady for them, so numbers in
 messages always match the database.
 
-**As built (caregiver phone call, branch `caregiver-call`):** besides OpenClaw's messages,
+**As built (caregiver phone call, merged on `main-caller`):** besides OpenClaw's messages,
 Steady itself phones the caregiver (then the backup) after a fall with no answer or "needs help",
 with Twilio + Pipecat + Deepgram + Ollama, and records a `caregiver_call` task (tier 2). See
 `docs/caregiver-call.md`.
+
+On the call Steady speaks first and cannot be interrupted, then it is a conversation of up to
+three minutes: the caregiver can ask questions before and after agreeing (answered from what
+happened and the band's live status), agrees by saying yes or pressing 1, and ends it with a
+goodbye. Turns are decided by the words (a one-second pause ends a turn), not by sound, and
+background talk that is not meant for Steady is ignored: voice-activity detection failed on
+the first real calls in a noisy room.
 
 ### 7.2 Integration
 
@@ -635,11 +651,15 @@ created ─▶ (tier 1) needs_confirmation ─▶ confirmed ─▶ sent (hook OK
 
 `openclaw/README.md` is the current description. In short:
 
-- **Two outgoing paths only.** (1) The wearer asks out loud for a text message or an email to
+- **After a call, a report.** When a symptom check-in gets no answer twice (a tremor as well as
+  a fall), or the wearer says they need help, Steady phones the caregiver and afterwards sends
+  them a text and an email (`incident_report`) saying what happened and how the call went.
+- **Two outgoing paths the wearer or the schedule start.** (1) The wearer asks out loud for a text message or an email to
   an approved contact, and says yes once. (2) The end-of-day brief to the caregiver, at
   `brief.time`, by text, email or both. Task types: `message_contact`, `email_contact`,
-  `daily_brief`. **There is no emergency or alert path in M6**; a fall with no answer closes the
-  conversation and nothing is sent. That path is reserved for separate work.
+  `daily_brief`. **Messages have no emergency path.** After a possible fall with no answer, or
+  when the wearer says they need help, Steady phones the caregiver (see the note after 7.2 and
+  `docs/caregiver-call.md`).
 - **Allowlist.** Only the phone numbers and email addresses in `config/contacts.yaml` can
   receive anything; delivery re-checks the exact address on every send.
 - **Sent as the wearer.** Texts go through Messages on this Mac (the wearer's own iMessage

@@ -39,7 +39,6 @@ deepgram:
 voice:
   silence_s: 12                 # no answer for this long: ask once more, then close
   max_minutes: 10
-  interrupt_min_words: 2        # words heard over the agent before it stops talking
 
 policy:                         # what a detection does besides being logged (SPEC 5)
   quiet_hours: ["22:00", "07:00"]   # only a possible fall speaks at night
@@ -47,7 +46,7 @@ policy:                         # what a detection does besides being logged (SP
   max_checkins_per_hour: 3
   tremor_min_s: 60              # a tremor check-in needs this long...
   tremor_min_severity: concern  # ...and moderate or worse (concern); mild is logged only
-  demo: { cooldown_min: { default: 2 }, tremor_min_s: 20, tremor_min_severity: notice }   # mode: demo
+  demo: { cooldown_min: { default: 0.25 }, tremor_min_s: 12, tremor_min_severity: notice, max_checkins_per_hour: 30 }   # mode: demo: a second tremor 15 s later speaks again
 
 call:                           # phone the caregiver after a possible fall with no answer (Twilio + Pipecat + Deepgram)
   enabled: true                 # needs TWILIO_* in .env and a phone number in config/contacts.yaml
@@ -55,6 +54,7 @@ call:                           # phone the caregiver after a possible fall with
   public_url: ""                # empty: start a cloudflared quick tunnel; or a fixed https address
   ring_seconds: 25              # ring this long before trying the next person
   max_call_seconds: 180
+  report_fallback_s: 45         # after the call: OpenClaw has not written the report by then, Steady sends the plain facts
 
 context:
   rest_vol_rms_dps: 10.0        # gyro RMS in 0.5-3 Hz below this = arm at rest (calibration overrides)
@@ -67,8 +67,8 @@ context:
 thresholds:                     # starting values; calibration (M8) replaces noise_floor_dps
   tremor:
     min_amp_dps: 4.0            # weakest rhythm that counts, deg/s RMS in 3.5-12 Hz
-    max_amp_dps: 150.0          # stronger than this is a deliberate action, not a tremor
-    max_acc_dyn_g: 0.35
+    max_amp_dps: 300.0          # stronger than this is a deliberate, violent action, not a tremor
+    max_acc_dyn_g: 1.5
     min_ratio: 0.5
     min_conc: 0.4
     min_prom: 5.0

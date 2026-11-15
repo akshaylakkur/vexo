@@ -83,7 +83,7 @@ def _merge(base: dict, extra: dict) -> dict:
 
 def load(path: Path = CONFIG_PATH, overrides: dict[str, Any] | None = None) -> Config:
     raw = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
-    if path == CONFIG_PATH and LOCAL_PATH.exists():
+    if path == CONFIG_PATH and LOCAL_PATH.exists() and not os.environ.get("STEADY_NO_LOCAL"):   # tests ignore this machine's settings
         _merge(raw, yaml.safe_load(LOCAL_PATH.read_text(encoding="utf-8")) or {})
     for dotted, value in (overrides or {}).items():
         node = raw
